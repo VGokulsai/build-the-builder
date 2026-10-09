@@ -115,18 +115,40 @@ def _claude_cli(prompt, system, timeout):
     cmd = ["claude", "-p", "--model", os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001"),
            "--output-format", "json", "--setting-sources", "", "--tools", "", "--strict-mcp-config",
            "--system-prompt", system or short]
+    stdout, stderr = run_bounded(cmd, prompt, timeout)
     try:
-        out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
-                             encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        raise TimeoutError("claude did not answer in %.0fs" % timeout)
-    try:
-        envelope = json.loads(out.stdout)
+        envelope = json.loads(stdout)
     except ValueError:
-        raise ConnectionError("claude returned no JSON envelope: %s" % (out.stderr or out.stdout)[:200])
+        raise ConnectionError("claude returned no JSON envelope: %s" % (stderr or stdout)[:200])
     if envelope.get("is_error"):       # no auth, usage limit, bad flag: the question never reached a model
         raise Blocked("claude error: %s" % str(envelope.get("result"))[:200])
     return envelope.get("result") or ""
+
+
+def run_bounded(cmd, stdin_text, timeout):
+    """Run a program and return (stdout, stderr), or raise TimeoutError close to `timeout`.
+    subprocess.run's timeout is not enough on Windows: after killing the program it waits for
+    any child process still holding the output pipes (reproduced: a 3 s timeout took 60 s).
+    So on timeout the whole process tree is killed, and the pipes are never waited on for long."""
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, encoding="utf-8", errors="replace",
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        return p.communicate(stdin_text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True)
+        else:
+            p.kill()
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            for pipe in (p.stdin, p.stdout, p.stderr):
+                try:
+                    pipe and pipe.close()
+                except OSError:
+                    pass
+        raise TimeoutError("%s did not answer in %.0fs" % (os.path.basename(cmd[0]), timeout))
 
 
 def _post(url, body, headers, timeout=120.0):

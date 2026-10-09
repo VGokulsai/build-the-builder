@@ -18,20 +18,29 @@ MUTANTS = [
     ("builder/llm.py", "    try:\n        return json.loads(raw)\n    except ValueError:",
      "    try:\n        return json.loads(raw)\n    except KeyError:", "HTML body crashes"),
     ("builder/llm.py", "            if not body[i + end:].strip(\" \\n\\t.`\"):", "            if True:", "fragments of cut-off replies parsed"),
+    ("builder/llm.py", [("            subprocess.run([\"taskkill\", \"/F\", \"/T\", \"/PID\", str(p.pid)], capture_output=True)",
+                         "            p.kill()"),
+                        ("            p.communicate(timeout=5)", "            p.communicate()")],
+     None, "hung child process holds a timed-out call"),
 ]
 
 
 def main():
     survived = []
     for path, old, new, name in MUTANTS:
+        pairs = old if isinstance(old, list) else [(old, new)]   # a mutant may change several lines
         src = open(path, encoding="utf-8").read()
-        if old not in src:
+        missing = [o for o, _ in pairs if o not in src]
+        if missing:
             print("PATTERN MISSING for %r: fix the mutant, it proves nothing" % name)
             survived.append(name)
             continue
+        mutated = src
+        for o, n in pairs:
+            mutated = mutated.replace(o, n, 1)
         shutil.copy(path, path + ".bak")
         try:
-            open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
+            open(path, "w", encoding="utf-8").write(mutated)
             r = subprocess.run([sys.executable, "test_builder.py"], capture_output=True, text=True)
             caught = r.returncode != 0
             print("%-8s %s" % ("caught" if caught else "SURVIVED", name))

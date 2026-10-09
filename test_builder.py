@@ -185,11 +185,8 @@ assert "freeze_card(customer_id" in prompt and core.TOOL_HABITS[1] in prompt, pr
 # a blocked model (logged out, usage limit) fails at once instead of retrying for minutes
 import subprocess  # noqa: E402
 waits.clear()
-real_run = subprocess.run
-class LoggedOut:
-    stdout = json.dumps({"is_error": True, "result": "Failed to authenticate: OAuth session expired"})
-    stderr = ""
-subprocess.run = lambda *a, **kw: LoggedOut()
+real_bounded = llm.run_bounded
+llm.run_bounded = lambda *a: (json.dumps({"is_error": True, "result": "Failed to authenticate: OAuth session expired"}), "")
 os.environ["LLM_PROVIDER"] = "claude-cli"
 llm.SLEEP = waits.append
 try:
@@ -197,7 +194,7 @@ try:
     raise AssertionError("blocked call returned")
 except llm.Blocked:
     pass
-llm.SLEEP, subprocess.run = real_sleep, real_run
+llm.SLEEP, llm.run_bounded = real_sleep, real_bounded
 os.environ["LLM_PROVIDER"] = "stub"
 assert waits == [], waits
 
@@ -210,17 +207,26 @@ odd = core.tools_text({"tools": [{"function": "ping"}, {"name": "p", "parameters
 assert "p(id: string)" in odd and "bare()" in odd, odd
 
 # a long agent prompt goes to claude on stdin, never on the 32 KB command line
-import subprocess  # noqa: E402
 seen_cmd = {}
-real_run = subprocess.run
-def fake_run(cmd, input=None, **kw):
-    seen_cmd.update(cmd=cmd, input=input)
-    class R: stdout = json.dumps({"result": "ok"}); stderr = ""
-    return R()
-subprocess.run = fake_run
+def fake_bounded(cmd, stdin_text, timeout):
+    seen_cmd.update(cmd=cmd, input=stdin_text)
+    return json.dumps({"result": "ok"}), ""
+llm.run_bounded = fake_bounded
 assert llm._claude_cli("hello", "S" * 40000, 30) == "ok"
-subprocess.run = real_run
+llm.run_bounded = real_bounded
 assert len(" ".join(seen_cmd["cmd"])) < 32000 and "S" * 40000 in seen_cmd["input"], len(" ".join(seen_cmd["cmd"]))
+
+# a hung program whose child keeps the pipes open cannot hold a call past its timeout
+# (real processes; with plain subprocess.run a 3 s timeout took 60 s here)
+import sys  # noqa: E402
+import time  # noqa: E402
+t_start = time.time()
+try:
+    llm.run_bounded([sys.executable, "tests_fake_hang.py"], "x", 3)
+    raise AssertionError("hung program returned")
+except TimeoutError:
+    pass
+assert time.time() - t_start < 15, time.time() - t_start
 
 # the simulated backend sees earlier calls with their results, in order
 hist = core._tool_history([("agent", "One moment.\nCALL verify_identity {}"), ("system", "RESULT: verified, customer_id C1"),

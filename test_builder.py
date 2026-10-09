@@ -181,6 +181,67 @@ assert "lookup(q: string)" in tt and "old_style(): args: {a, b}" in tt, tt
 prompt = core.agent_prompt(spec, schema_task)
 assert "freeze_card(customer_id" in prompt and core.TOOL_HABITS[1] in prompt, prompt
 
+# --- second review's fixes ---
+# a blocked model (logged out, usage limit) fails at once instead of retrying for minutes
+import subprocess  # noqa: E402
+waits.clear()
+real_run = subprocess.run
+class LoggedOut:
+    stdout = json.dumps({"is_error": True, "result": "Failed to authenticate: OAuth session expired"})
+    stderr = ""
+subprocess.run = lambda *a, **kw: LoggedOut()
+os.environ["LLM_PROVIDER"] = "claude-cli"
+llm.SLEEP = waits.append
+try:
+    llm.ask("x", "y")
+    raise AssertionError("blocked call returned")
+except llm.Blocked:
+    pass
+llm.SLEEP, subprocess.run = real_sleep, real_run
+os.environ["LLM_PROVIDER"] = "stub"
+assert waits == [], waits
+
+# tasks in other wordings are understood; unknown shapes fall back to the whole task
+assert core.task_description({"instructions": "Help callers reset a PIN", "tools": []}) == "Help callers reset a PIN"
+assert '"scenario": "x"' in core.task_description({"scenario": "x", "tools": [{"name": "t"}]})
+
+# odd tool shapes do not crash
+odd = core.tools_text({"tools": [{"function": "ping"}, {"name": "p", "parameters": {"properties": {"id": "string"}, "required": ["id"]}}, "bare"]})
+assert "p(id: string)" in odd and "bare()" in odd, odd
+
+# a long agent prompt goes to claude on stdin, never on the 32 KB command line
+import subprocess  # noqa: E402
+seen_cmd = {}
+real_run = subprocess.run
+def fake_run(cmd, input=None, **kw):
+    seen_cmd.update(cmd=cmd, input=input)
+    class R: stdout = json.dumps({"result": "ok"}); stderr = ""
+    return R()
+subprocess.run = fake_run
+assert llm._claude_cli("hello", "S" * 40000, 30) == "ok"
+subprocess.run = real_run
+assert len(" ".join(seen_cmd["cmd"])) < 32000 and "S" * 40000 in seen_cmd["input"], len(" ".join(seen_cmd["cmd"]))
+
+# the simulated backend sees earlier calls with their results, in order
+hist = core._tool_history([("agent", "One moment.\nCALL verify_identity {}"), ("system", "RESULT: verified, customer_id C1"),
+                           ("customer", "ok"), ("agent", "CALL freeze_card {\"customer_id\": \"C1\"}")])
+assert hist.splitlines() == ["CALL verify_identity {}", "  RESULT: verified, customer_id C1", 'CALL freeze_card {"customer_id": "C1"}'], hist
+
+# a gateway answering 200 with HTML is a retryable connection error, not a crash
+import urllib.request  # noqa: E402
+real_urlopen = urllib.request.urlopen
+class Html:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return b"<html>bad gateway</html>"
+urllib.request.urlopen = lambda *a, **kw: Html()
+try:
+    llm._post("http://x", {}, {})
+    raise AssertionError("HTML body accepted")
+except ConnectionError:
+    pass
+urllib.request.urlopen = real_urlopen
+
 # a reply cut off by the length limit is never parsed into a fragment of itself
 from builder.llm import parse_json  # noqa: E402
 assert parse_json('```json\n[{"a": 1}, {"b": 2}]\n```') == [{"a": 1}, {"b": 2}]

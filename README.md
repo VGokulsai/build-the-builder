@@ -36,7 +36,9 @@ Model backends (`LLM_PROVIDER`): `anthropic`, `openai` (any OpenAI-compatible en
 python test_builder.py
 ```
 
-Runs the whole loop on the stub model, which is rigged so a critical breach scores 0 and later revisions score worse than the best one. It checks that the builder keeps the best agent, re-scores it on fresh customers, adds the phone rules, and survives a step failing mid-run.
+`python mutate.py` then undoes key fixes one at a time and confirms the tests fail for each; a test that passes with its fix removed checks nothing.
+
+`test_builder.py` runs the whole loop on the stub model, which is rigged so a critical breach scores 0 and later revisions score worse than the best one. It checks that the builder keeps the best agent, re-scores it on fresh customers, adds the phone rules, and survives a step failing mid-run.
 
 ## Layout
 

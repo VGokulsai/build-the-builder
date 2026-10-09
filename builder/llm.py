@@ -26,6 +26,11 @@ class OutOfTime(RuntimeError):
     """The whole build's time budget is spent; stop calling the model."""
 
 
+class Blocked(RuntimeError):
+    """The model cannot be reached in a way retrying will not fix (logged out, usage limit).
+    Not retried, so the build falls back in seconds instead of waiting out every call."""
+
+
 CALL_BUDGET = float(os.environ.get("CALL_BUDGET", "180"))   # seconds one call may take, retries included
 DEADLINE = {"at": None}     # monotonic time when the whole build must stop calling the model
 SLEEP, NOW = time.sleep, time.monotonic                      # tests swap these out
@@ -103,9 +108,13 @@ def _claude_cli(prompt, system, timeout):
     """The local `claude` login, headless. The flags strip CLAUDE.md, skills, plugins, tools and
     MCP servers out of each call (measured 14x cheaper on this machine, see cloud-pet/ask.py).
     The prompt goes on stdin: Windows caps a command line at 32 KB."""
+    short = "Follow the user's instructions exactly."
+    if len(system) > 4000:              # a long agent prompt would break the 32 KB command line: send it on stdin
+        prompt = "SYSTEM INSTRUCTIONS (follow them exactly):\n%s\n\n---\n\n%s" % (system, prompt)
+        system = short
     cmd = ["claude", "-p", "--model", os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001"),
            "--output-format", "json", "--setting-sources", "", "--tools", "", "--strict-mcp-config",
-           "--system-prompt", system or "Follow the user's instructions exactly."]
+           "--system-prompt", system or short]
     try:
         out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
                              encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -116,14 +125,18 @@ def _claude_cli(prompt, system, timeout):
     except ValueError:
         raise ConnectionError("claude returned no JSON envelope: %s" % (out.stderr or out.stdout)[:200])
     if envelope.get("is_error"):       # no auth, usage limit, bad flag: the question never reached a model
-        raise ConnectionError("claude error: %s" % str(envelope.get("result"))[:200])
+        raise Blocked("claude error: %s" % str(envelope.get("result"))[:200])
     return envelope.get("result") or ""
 
 
 def _post(url, body, headers, timeout=120.0):
     req = urllib.request.Request(url, json.dumps(body).encode(), {"content-type": "application/json", **headers})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+        raw = r.read()
+    try:
+        return json.loads(raw)
+    except ValueError:                  # a gateway answered 200 with an HTML or empty body: transient, retry
+        raise ConnectionError("non-JSON response from %s: %r" % (url, raw[:120]))
 
 
 def ask_json(role, prompt, system="", max_tokens=4000):

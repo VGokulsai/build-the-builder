@@ -49,13 +49,18 @@ TOOL_HABITS = [
 def _tool(t):
     """One tool, in whatever shape the platform gives it: {name, description, parameters}
     (OpenAI function), {name, input_schema} (Anthropic), {function: {...}} or {args: "..."}."""
-    t = t.get("function", t) if isinstance(t, dict) else {"name": str(t)}
+    if not isinstance(t, dict):
+        t = {"name": str(t)}
+    elif isinstance(t.get("function"), dict):
+        t = t["function"]
     schema = t.get("parameters") or t.get("input_schema") or t.get("args") or {}
-    if isinstance(schema, dict) and "properties" in schema:
-        required = set(schema.get("required", []))
-        args = ", ".join("%s%s: %s%s" % (k, "" if k in required else "?", v.get("type", "any"),
-                                          (" (" + v["description"] + ")") if v.get("description") else "")
-                         for k, v in schema["properties"].items())
+    if isinstance(schema, dict) and isinstance(schema.get("properties"), dict):
+        required = set(schema.get("required") or [])
+        def arg(k, v):
+            v = v if isinstance(v, dict) else {"type": _text(v)}
+            note = (" (" + _text(v["description"]) + ")") if v.get("description") else ""
+            return "%s%s: %s%s" % (k, "" if k in required else "?", _text(v.get("type", "any")), note)
+        args = ", ".join(arg(k, v) for k, v in schema["properties"].items())
     else:
         args = _text(schema) if schema else ""
     return {"name": t.get("name", "tool"), "description": t.get("description", ""), "args": args}
@@ -66,8 +71,19 @@ def tools_text(task):
     return "\n".join("- %s(%s): %s" % (t["name"], t["args"], t["description"]) for t in tools) or "(none)"
 
 
+TASK_KEYS = ("description", "instructions", "task", "prompt", "goal", "objective", "brief")
+
+
+def task_description(task):
+    """The task's text under whatever key the platform uses; if none matches, every field but the tools."""
+    for key in TASK_KEYS:
+        if task.get(key):
+            return _text(task[key])
+    return json.dumps({k: v for k, v in task.items() if k != "tools"}, ensure_ascii=False)
+
+
 def _task_text(task):
-    return "TASK:\n%s\n\nTOOLS (name(arguments; ? = optional): what it does):\n%s" % (task["description"], tools_text(task))
+    return "TASK:\n%s\n\nTOOLS (name(arguments; ? = optional): what it does):\n%s" % (task_description(task), tools_text(task))
 
 
 def _pmap(fn, items):
@@ -203,6 +219,17 @@ def _spoken(text):
     return "\n".join(l for l in text.splitlines() if not l.strip().startswith("CALL ")).strip()
 
 
+def _tool_history(talk):
+    """Every CALL line and RESULT so far, in order, so the simulated backend stays consistent."""
+    lines = []
+    for s, t in talk:
+        if s == "system":
+            lines.append("  " + t.strip())
+        elif s == "agent":
+            lines += [l.strip() for l in t.splitlines() if l.strip().startswith("CALL ")]
+    return "\n".join(lines)
+
+
 def simulate(spec, task, sc, max_turns=8):
     """Play one call. Returns the full transcript (with tool calls and results) as (speaker, text) pairs.
     The simulated caller only ever hears what the agent says, never tool calls or results."""
@@ -233,11 +260,12 @@ Say your next line only. If your goal is met or you give up, end with [DONE]."""
                 talk.append(("system", ask("tool", """You simulate the company's backend for this task.
 %s
 Customer facts: %s
-Tool calls so far in this call: %s
+Earlier tool calls and your results in this call (stay consistent with them, e.g. reuse ids):
+%s
 The agent now called: %s
 Reply with one line starting RESULT: and a realistic result (an error if the call is wrong,
 has bad arguments, or is not allowed yet).""" % (_task_text(task), json.dumps(sc["facts"]),
-                                                 [t for s, t in talk if s == "system"], line))))
+                                                 _tool_history(talk) or "(none yet)", line))))
     return talk
 
 
@@ -365,10 +393,15 @@ def _build(task, rounds, n_train, n_val, k, log):
     spec, draft_fb = _try(log, "drafting", lambda: draft(task, rules), lambda: fallback_spec(task))
     pool = []                 # every candidate; score None = could not be measured
     round_secs, stopped_early = [], False
+
+    def per_finalist():       # validating one candidate plays n_val customers where a round plays len(train)
+        return max(round_secs) * n_val / max(1, len(train))
+
     for r in range(rounds):
         left = _left()
-        if left is not None and round_secs and left < 2 * max(round_secs):
-            log("stopping after %d rounds: %.0fs left, a round takes up to %.0fs" % (r, left, max(round_secs)))
+        n_scored = sum(1 for c in pool if c["score"] is not None)
+        if left is not None and round_secs and left < max(round_secs) + per_finalist() * min(3, n_scored + 1):
+            log("stopping after %d rounds: %.0fs left, a round takes up to %.0fs plus validation" % (r, left, max(round_secs)))
             stopped_early = True
             break
         t0 = llm.NOW()
@@ -398,9 +431,11 @@ def _build(task, rounds, n_train, n_val, k, log):
     best = max(scored, key=lambda c: c["score"]) if scored else pool[0]
     finalists = sorted(scored, key=lambda c: -c["score"])[:3]
     left = _left()
-    if finalists and left is not None and round_secs and left < max(round_secs):
-        log("skipping validation: %.0fs left" % left)
-        stopped_early, finalists = True, []
+    if finalists and left is not None and round_secs:
+        fit = int(left // per_finalist())
+        if fit < len(finalists):  # validate only the top candidates there is time for
+            log("time for %d of %d finalists in validation (%.0fs left)" % (fit, len(finalists), left))
+            stopped_early, finalists = True, finalists[:fit]
     if finalists:
         try:
             val = scenarios(task, rules, n_val, avoid=train)

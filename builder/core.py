@@ -19,6 +19,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+from builder import llm
 from builder.llm import ask, ask_json
 
 SPEC_KEYS = ("name", "system_prompt", "first_message", "tool_rules", "guardrails")
@@ -308,15 +309,39 @@ def _try(log, what, fn, fallback):
         return fallback(), True
 
 
-def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print):
+def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print, minutes=None):
     """Rules -> draft -> (evaluate, pick a Pareto parent, revise) x rounds -> pick on fresh customers.
-    Always returns an agent; the report says which steps fell back and what was never measured."""
+    Always returns an agent; the report says which steps fell back and what was never measured.
+    With `minutes`, no model call outlives the budget, and rounds stop early when one more round
+    plus the final check would not fit, so the best agent so far is always delivered on time."""
+    started = llm.NOW()
+    llm.DEADLINE["at"] = started + minutes * 60 - 15 if minutes else None   # 15 s kept for writing files
+    try:
+        spec, report = _build(task, rounds, n_train, n_val, k, log)
+    finally:
+        llm.DEADLINE["at"] = None
+    report["seconds"] = round(llm.NOW() - started, 1)
+    return spec, report
+
+
+def _left():
+    return None if llm.DEADLINE["at"] is None else llm.DEADLINE["at"] - llm.NOW()
+
+
+def _build(task, rounds, n_train, n_val, k, log):
     rules, rules_fb = _try(log, "rule extraction", lambda: extract_rules(task), list)
     log("%d rules (%d critical)" % (len(rules), sum(r["critical"] for r in rules)))
     train, train_fb = _try(log, "test customers", lambda: scenarios(task, rules, n_train), lambda: fallback_scenarios(task))
     spec, draft_fb = _try(log, "drafting", lambda: draft(task, rules), lambda: fallback_spec(task))
     pool = []                 # every candidate; score None = could not be measured
+    round_secs, stopped_early = [], False
     for r in range(rounds):
+        left = _left()
+        if left is not None and round_secs and left < 2 * max(round_secs):
+            log("stopping after %d rounds: %.0fs left, a round takes up to %.0fs" % (r, left, max(round_secs)))
+            stopped_early = True
+            break
+        t0 = llm.NOW()
         try:
             if spec is None:  # the last revise failed: try again from a good parent
                 scored = [c for c in pool if c["score"] is not None]
@@ -336,11 +361,16 @@ def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print):
                               parent["evidence"])
         except Exception as e:                      # a failed round must not lose the agents we have
             log("round %d failed (%s: %s); keeping the pool" % (r, type(e).__name__, e))
+        round_secs.append(llm.NOW() - t0)
     if not pool:              # nothing could be measured at all: still submit the draft
         pool.append({"round": 0, "spec": spec or fallback_spec(task), "score": None, "per": [], "failures": [], "errors": []})
     scored = [c for c in pool if c["score"] is not None]
     best = max(scored, key=lambda c: c["score"]) if scored else pool[0]
     finalists = sorted(scored, key=lambda c: -c["score"])[:3]
+    left = _left()
+    if finalists and left is not None and round_secs and left < max(round_secs):
+        log("skipping validation: %.0fs left" % left)
+        stopped_early, finalists = True, []
     if finalists:
         try:
             val = scenarios(task, rules, n_val, avoid=train)
@@ -353,7 +383,7 @@ def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print):
         except Exception as e:
             log("validation failed (%s: %s); using the best train score" % (type(e).__name__, e))
     report = {"rules": rules, "best_round": best["round"], "train": best["score"], "val": best.get("val"),
-              "fallbacks": {"rules": rules_fb, "customers": train_fb, "draft": draft_fb},
+              "fallbacks": {"rules": rules_fb, "customers": train_fb, "draft": draft_fb}, "stopped_early": stopped_early,
               "pool": [{key: c.get(key) for key in ("round", "score", "per", "failures", "errors", "val")} for c in pool]}
     return best["spec"], report
 

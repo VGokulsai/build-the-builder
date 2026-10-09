@@ -21,14 +21,30 @@ class Truncated(ValueError):
     """The model hit its length limit, so the reply is incomplete and must not be parsed."""
 
 
+class OutOfTime(RuntimeError):
+    """The whole build's time budget is spent; stop calling the model."""
+
+
+CALL_BUDGET = float(os.environ.get("CALL_BUDGET", "180"))   # seconds one call may take, retries included
+DEADLINE = {"at": None}     # monotonic time when the whole build must stop calling the model
+SLEEP, NOW = time.sleep, time.monotonic                      # tests swap these out
+
+
 def ask(role, prompt, system="", max_tokens=1500, tries=7):
     """Send one prompt; return the model's text. Retries rate limits, server errors
     and timeouts with backoff, because nobody can touch the builder during judging.
-    A 429 waits as long as the server's Retry-After asks, else backs off up to a minute."""
+    A 429 waits as long as the server's Retry-After asks, else backs off up to a minute.
+    No call outlives CALL_BUDGET or the build's DEADLINE, so a hung provider cannot
+    freeze the builder past the hackathon deadline."""
+    start = NOW()
     for attempt in range(tries):
+        left = min(CALL_BUDGET - (NOW() - start),
+                   DEADLINE["at"] - NOW() if DEADLINE["at"] is not None else CALL_BUDGET)
+        if left <= 1:
+            raise OutOfTime("no time left for step %r" % role)
         wait = min(60, 2 * 2 ** attempt)
         try:
-            return _ask(role, prompt, system, max_tokens)
+            return _ask(role, prompt, system, max_tokens, timeout=max(5.0, min(120.0, left)))
         except urllib.error.HTTPError as e:
             if e.code not in (408, 409, 429, 500, 502, 503, 504, 529) or attempt == tries - 1:
                 raise
@@ -37,16 +53,17 @@ def ask(role, prompt, system="", max_tokens=1500, tries=7):
                 wait = min(120, int(after.strip()) + 1)
             elif e.code == 429:
                 wait = min(60, 5 * 2 ** attempt)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            error = e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             if attempt == tries - 1:
                 raise
+            error = e
+        if NOW() - start + wait >= CALL_BUDGET or (DEADLINE["at"] is not None and NOW() + wait >= DEADLINE["at"]):
+            raise error         # waiting longer would break the budget: give up on this call now
         SLEEP(wait)
 
 
-SLEEP = time.sleep          # tests swap this out
-
-
-def _ask(role, prompt, system, max_tokens):
+def _ask(role, prompt, system, max_tokens, timeout=120.0):
     with _lock:
         CALLS["n"] += 1
     provider = os.environ.get("LLM_PROVIDER", "stub")
@@ -59,7 +76,7 @@ def _ask(role, prompt, system, max_tokens):
         if system:
             body["system"] = system
         data = _post("https://api.anthropic.com/v1/messages", body,
-                     {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
+                     {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"}, timeout)
         text = "".join(b.get("text", "") for b in data["content"])
         if data.get("stop_reason") == "max_tokens":
             raise Truncated(text)
@@ -68,7 +85,7 @@ def _ask(role, prompt, system, max_tokens):
         msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
         body = {"model": os.environ["LLM_MODEL"], "max_tokens": max_tokens, "messages": msgs}
         data = _post(os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions", body,
-                     {"Authorization": "Bearer " + os.environ["LLM_API_KEY"]})
+                     {"Authorization": "Bearer " + os.environ["LLM_API_KEY"]}, timeout)
         choice = data["choices"][0]
         text = choice["message"].get("content") or ""
         if isinstance(text, list):          # content given as parts: [{"type": "text", "text": ...}]
@@ -79,9 +96,9 @@ def _ask(role, prompt, system, max_tokens):
     raise SystemExit("Unknown LLM_PROVIDER: %r" % provider)
 
 
-def _post(url, body, headers):
+def _post(url, body, headers, timeout=120.0):
     req = urllib.request.Request(url, json.dumps(body).encode(), {"content-type": "application/json", **headers})
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
 

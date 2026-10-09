@@ -21,11 +21,13 @@ def main(argv=None):
     p.add_argument("--train", type=int, default=4, help="test customers used for improving")
     p.add_argument("--val", type=int, default=3, help="fresh customers used for picking the winner")
     p.add_argument("--k", type=int, default=2, help="plays per customer; the worst one counts")
+    p.add_argument("--minutes", type=float, default=None,
+                   help="time budget for this task; stops early and delivers the best agent so far")
     p.add_argument("--out", default="out")
     a = p.parse_args(argv)
 
     task = json.load(open(a.task, encoding="utf-8"))
-    spec, report = core.build(task, rounds=a.rounds, n_train=a.train, n_val=a.val, k=a.k)
+    spec, report = core.build(task, rounds=a.rounds, n_train=a.train, n_val=a.val, k=a.k, minutes=a.minutes)
     report["model_calls"] = CALLS["n"]
     report["provider"] = os.environ.get("LLM_PROVIDER", "stub")
 

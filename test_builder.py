@@ -116,7 +116,7 @@ import urllib.error  # noqa: E402
 from builder import llm  # noqa: E402
 waits, tries = [], {"n": 0}
 real_ask_, real_sleep, real_post = llm._ask, llm.SLEEP, llm._post
-def limited(*a):
+def limited(*a, **kw):
     tries["n"] += 1
     if tries["n"] <= 3:
         raise urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "30"} if tries["n"] == 1 else {}, io.BytesIO())
@@ -135,6 +135,37 @@ except llm.Truncated:
     pass
 llm._post, llm.SLEEP = real_post, real_sleep
 os.environ["LLM_PROVIDER"] = "stub"
+
+# time budgets, on a fake clock: a dead provider cannot hold one call past CALL_BUDGET,
+# and a build with --minutes stops early, still returns an agent, and clears its deadline
+clock = {"t": 0.0}
+real_now, real_sleep2 = llm.NOW, llm.SLEEP
+llm.NOW = lambda: clock["t"]
+llm.SLEEP = lambda s: clock.__setitem__("t", clock["t"] + s)
+def hung(*a, **kw):
+    clock["t"] += kw.get("timeout", 120)          # the request hangs until its timeout
+    raise TimeoutError("hung")
+llm._ask = hung
+try:
+    llm.ask("x", "y")
+    raise AssertionError("a hung provider never gave up")
+except (TimeoutError, llm.OutOfTime):
+    pass
+assert clock["t"] <= llm.CALL_BUDGET + 1, clock["t"]
+llm._ask = real_ask_
+
+def slow_stub(*a, **kw):
+    clock["t"] += 1.0                             # every model call takes a second
+    return real_ask_(*a, **kw)
+llm._ask = slow_stub
+logs = []
+spec4, report4 = core.build(task, rounds=10, n_train=2, n_val=1, k=1, log=logs.append, minutes=3)
+llm._ask, llm.NOW, llm.SLEEP = real_ask_, real_now, real_sleep2
+assert report4["stopped_early"] and len(report4["pool"]) < 10, (report4["stopped_early"], len(report4["pool"]))
+assert any(m.startswith("stopping after") for m in logs), logs            # the loop chose to stop...
+assert not any("failed" in m for m in logs), [m for m in logs if "failed" in m]   # ...before a round ran out of time
+assert report4["seconds"] <= 180, report4["seconds"]
+assert spec4["system_prompt"] and llm.DEADLINE["at"] is None
 
 # a reply cut off by the length limit is never parsed into a fragment of itself
 from builder.llm import parse_json  # noqa: E402

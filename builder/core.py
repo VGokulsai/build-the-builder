@@ -32,6 +32,7 @@ VOICE_RULES = [
     "Read back numbers, dates and names to confirm them before acting on them.",
     "Say what you are doing before a tool call (\"one moment while I check\") and say the result plainly after.",
     "If the caller is upset, acknowledge it in a few words, then move to the fix.",
+    "If the caller asks for a person, or you cannot finish safely, say so and hand off (use a handoff tool if one exists).",
 ]
 
 

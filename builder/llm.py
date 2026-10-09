@@ -17,6 +17,10 @@ CALLS = {"n": 0}          # how many model calls this run made (for budgets and 
 _lock = threading.Lock()  # calls run in parallel threads
 
 
+class Truncated(ValueError):
+    """The model hit its length limit, so the reply is incomplete and must not be parsed."""
+
+
 def ask(role, prompt, system="", max_tokens=1500, tries=4):
     """Send one prompt; return the model's text. Retries rate limits, server errors
     and timeouts with backoff, because nobody can touch the builder during judging."""
@@ -46,13 +50,20 @@ def _ask(role, prompt, system, max_tokens):
             body["system"] = system
         data = _post("https://api.anthropic.com/v1/messages", body,
                      {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
-        return "".join(b.get("text", "") for b in data["content"])
+        text = "".join(b.get("text", "") for b in data["content"])
+        if data.get("stop_reason") == "max_tokens":
+            raise Truncated(text)
+        return text
     if provider == "openai":
         msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
         body = {"model": os.environ["LLM_MODEL"], "max_tokens": max_tokens, "messages": msgs}
         data = _post(os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions", body,
                      {"Authorization": "Bearer " + os.environ["LLM_API_KEY"]})
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        text = choice["message"].get("content") or ""
+        if choice.get("finish_reason") == "length":
+            raise Truncated(text)
+        return text
     raise SystemExit("Unknown LLM_PROVIDER: %r" % provider)
 
 
@@ -62,16 +73,34 @@ def _post(url, body, headers):
         return json.load(r)
 
 
-def ask_json(role, prompt, system="", max_tokens=1500):
-    """ask(), then parse the first JSON value in the reply, trying every { or [ in turn
-    (so a stray "[r1]" in prose does not hide the real JSON). Retries once on bad JSON."""
+def ask_json(role, prompt, system="", max_tokens=4000):
+    """ask(), then parse the reply's JSON. Only JSON that runs to the end of the reply counts,
+    so a fragment inside a cut-off answer is never mistaken for the answer. A reply that hit the
+    length limit is retried with twice the room; bad JSON is retried once."""
     text = ""
-    for attempt in range(2):
-        text = ask(role, prompt + ("" if attempt == 0 else "\n\nReply with valid JSON only."), system, max_tokens)
-        for i, ch in enumerate(text):
-            if ch in "{[":
-                try:
-                    return json.JSONDecoder().raw_decode(text[i:])[0]
-                except json.JSONDecodeError:
-                    continue
-    raise ValueError("model gave no valid JSON for step %r: %r" % (role, text[:200]))
+    for attempt in range(3):
+        try:
+            text = ask(role, prompt + ("" if attempt == 0 else "\n\nReply with valid JSON only."), system, max_tokens)
+        except Truncated:
+            max_tokens = min(max_tokens * 2, 16000)
+            continue
+        value = parse_json(text)
+        if value is not None:
+            return value
+    raise ValueError("model gave no complete JSON for step %r: %r" % (role, text[:200]))
+
+
+def parse_json(text):
+    """The JSON value that ends the reply (code fences and trailing punctuation allowed), or None."""
+    body = text.strip()
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    for i, ch in enumerate(body):
+        if ch in "{[":
+            try:
+                value, end = json.JSONDecoder().raw_decode(body[i:])
+            except json.JSONDecodeError:
+                continue
+            if not body[i + end:].strip(" \n\t.`"):
+                return value
+    return None

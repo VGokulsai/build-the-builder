@@ -99,4 +99,11 @@ core.extract_rules, core.scenarios, core.draft = saved
 assert report3["fallbacks"] == {"rules": True, "customers": True, "draft": True}, report3["fallbacks"]
 assert spec3["first_message"] and spec3["system_prompt"], spec3
 
+# a reply cut off by the length limit is never parsed into a fragment of itself
+from builder.llm import parse_json  # noqa: E402
+assert parse_json('```json\n[{"a": 1}, {"b": 2}]\n```') == [{"a": 1}, {"b": 2}]
+assert parse_json('```json\n[\n {"id": "r1", "critical": true},\n {"id": "r2", "crit') is None
+assert parse_json('{"checks": {"r1": true}, "failures": ["did not proceed to') is None
+assert parse_json('See rule [r1]. Here: {"x": 1}') == {"x": 1}
+
 print("builder checks pass (%d model calls in the main run)" % report["model_calls"])

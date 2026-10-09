@@ -21,19 +21,29 @@ class Truncated(ValueError):
     """The model hit its length limit, so the reply is incomplete and must not be parsed."""
 
 
-def ask(role, prompt, system="", max_tokens=1500, tries=4):
+def ask(role, prompt, system="", max_tokens=1500, tries=7):
     """Send one prompt; return the model's text. Retries rate limits, server errors
-    and timeouts with backoff, because nobody can touch the builder during judging."""
+    and timeouts with backoff, because nobody can touch the builder during judging.
+    A 429 waits as long as the server's Retry-After asks, else backs off up to a minute."""
     for attempt in range(tries):
+        wait = min(60, 2 * 2 ** attempt)
         try:
             return _ask(role, prompt, system, max_tokens)
         except urllib.error.HTTPError as e:
             if e.code not in (408, 409, 429, 500, 502, 503, 504, 529) or attempt == tries - 1:
                 raise
+            after = e.headers.get("Retry-After") if e.headers else None
+            if after and after.strip().isdigit():
+                wait = min(120, int(after.strip()) + 1)
+            elif e.code == 429:
+                wait = min(60, 5 * 2 ** attempt)
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             if attempt == tries - 1:
                 raise
-        time.sleep(2 ** attempt * 2)
+        SLEEP(wait)
+
+
+SLEEP = time.sleep          # tests swap this out
 
 
 def _ask(role, prompt, system, max_tokens):
@@ -61,6 +71,8 @@ def _ask(role, prompt, system, max_tokens):
                      {"Authorization": "Bearer " + os.environ["LLM_API_KEY"]})
         choice = data["choices"][0]
         text = choice["message"].get("content") or ""
+        if isinstance(text, list):          # content given as parts: [{"type": "text", "text": ...}]
+            text = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in text)
         if choice.get("finish_reason") == "length":
             raise Truncated(text)
         return text

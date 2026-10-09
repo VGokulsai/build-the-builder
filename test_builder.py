@@ -110,6 +110,32 @@ core.build(task, rounds=2, n_train=2, n_val=1, k=1, log=lambda s: None)
 core.revise = real_revise
 assert got and got[0] and "customer:" in got[0][0] and "(score 0.00)" in got[0][0], got
 
+# rate limits are waited out (honouring Retry-After), and list-shaped content is read as text
+import io  # noqa: E402
+import urllib.error  # noqa: E402
+from builder import llm  # noqa: E402
+waits, tries = [], {"n": 0}
+real_ask_, real_sleep, real_post = llm._ask, llm.SLEEP, llm._post
+def limited(*a):
+    tries["n"] += 1
+    if tries["n"] <= 3:
+        raise urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "30"} if tries["n"] == 1 else {}, io.BytesIO())
+    return "ok"
+llm._ask, llm.SLEEP = limited, waits.append
+assert llm.ask("x", "y") == "ok" and waits[0] == 31 and len(waits) == 3, waits
+llm._ask = real_ask_
+os.environ.update(LLM_PROVIDER="openai", LLM_MODEL="m", LLM_BASE_URL="http://x", LLM_API_KEY="k")
+llm._post = lambda *a: {"choices": [{"message": {"content": [{"type": "text", "text": "hel"}, {"type": "text", "text": "lo"}]}}]}
+assert llm.ask("x", "y") == "hello"
+llm._post = lambda *a: {"choices": [{"message": {"content": '{"a": 1'}, "finish_reason": "length"}]}
+try:
+    llm.ask("x", "y")
+    raise AssertionError("a length-limited reply was accepted")
+except llm.Truncated:
+    pass
+llm._post, llm.SLEEP = real_post, real_sleep
+os.environ["LLM_PROVIDER"] = "stub"
+
 # a reply cut off by the length limit is never parsed into a fragment of itself
 from builder.llm import parse_json  # noqa: E402
 assert parse_json('```json\n[{"a": 1}, {"b": 2}]\n```') == [{"a": 1}, {"b": 2}]

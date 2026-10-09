@@ -22,6 +22,9 @@ MUTANTS = [
                          "            p.kill()"),
                         ("            p.communicate(timeout=5)", "            p.communicate()")],
      None, "hung child process holds a timed-out call"),
+    ("builder/core.py", "        if _refused(user):", "        if False:", "a refusing caller is scored"),
+    ("builder/core.py", "    score = BREACH_CAP * share if critical_broken else share",
+     "    score = 0.0 if critical_broken else share", "breaches give no learning signal"),
 ]
 
 

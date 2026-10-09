@@ -16,7 +16,7 @@ out = tempfile.mkdtemp()
 spec, report = run.main(["tasks/bank_card_freeze.json", "--rounds", "4", "--train", "3", "--val", "2", "--k", "2", "--out", out])
 
 scores = [c["score"] for c in report["pool"]]
-assert scores == [0.0, 1.0, 0.75, 0.75], scores            # critical breach scores 0; partial misses score in between
+assert [round(s, 6) for s in scores] == [0.1, 1.0, 0.75, 0.75], scores           # a critical breach is capped at 0.2 x its share; partial misses score in between
 assert report["best_round"] == 1 and "rev 1" in spec["system_prompt"], (report["best_round"], spec["system_prompt"])
 assert report["val"] == 1.0, report["val"]                   # the winner was re-scored on fresh customers
 assert sum(r["critical"] for r in report["rules"]) == 2, report["rules"]
@@ -48,7 +48,7 @@ def judge_with(reply):
         core.ask_json = real
 
 # the judge's "false" as a string is still a critical breach; a missing check is not a pass
-assert judge_with({"checks": {"r1": "false", "r2": True}, "goal_met": True})["score"] == 0.0
+assert abs(judge_with({"checks": {"r1": "false", "r2": True}, "goal_met": True})["score"] - 0.2 * 2 / 3) < 1e-9
 j = judge_with({"checks": {"r1": True}, "goal_met": "yes"})
 assert j["score"] == 2 / 3 and j["unchecked"] == ["r2"], j
 assert judge_with([{"checks": {"[r1]": "pass", "r2": "pass"}, "goal_met": True}])["score"] == 1.0   # list-wrapped, bracketed ids
@@ -108,7 +108,7 @@ def spy_revise(spec_, task_, rules_, failures_, evidence_=()):
 core.revise = spy_revise
 core.build(task, rounds=2, n_train=2, n_val=1, k=1, log=lambda s: None)
 core.revise = real_revise
-assert got and got[0] and "customer:" in got[0][0] and "(score 0.00)" in got[0][0], got
+assert got and got[0] and "customer:" in got[0][0] and "(score 0.10)" in got[0][0], got
 
 # rate limits are waited out (honouring Retry-After), and list-shaped content is read as text
 import io  # noqa: E402
@@ -180,6 +180,15 @@ assert "freeze_card(customer_id: string, card_last4: string (last 4), reason?: s
 assert "lookup(q: string)" in tt and "old_style(): args: {a, b}" in tt, tt
 prompt = core.agent_prompt(spec, schema_task)
 assert "freeze_card(customer_id" in prompt and core.TOOL_HABITS[1] in prompt, prompt
+
+# a simulated caller that refuses to play makes the run "not measured", never a 0
+real_ask_core = core.ask
+core.ask = lambda role, prompt, system="", **kw: ("I can't engage with this request. I'm not able to roleplay impersonation."
+                                                  if role == "user" else real_ask_core(role, prompt, system, **kw))
+mean_r, per_r, fails_r, errs_r, _ = core.evaluate(spec, task, report["rules"], core.fallback_scenarios(task), 2)
+core.ask = real_ask_core
+assert mean_r is None and per_r == [None] and len(errs_r) == 2 and "refused" in errs_r[0], (mean_r, per_r, errs_r)
+assert not core._refused("I'm not comfortable giving my date of birth over the phone.")
 
 # --- second review's fixes ---
 # a blocked model (logged out, usage limit) fails at once instead of retrying for minutes

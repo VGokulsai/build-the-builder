@@ -41,7 +41,9 @@ def _ask(role, prompt, system, max_tokens):
         return answer(role, prompt, system)
     if provider == "anthropic":
         body = {"model": os.environ.get("LLM_MODEL", "claude-sonnet-5-5"), "max_tokens": max_tokens,
-                "system": system, "messages": [{"role": "user", "content": prompt}]}
+                "messages": [{"role": "user", "content": prompt}]}
+        if system:
+            body["system"] = system
         data = _post("https://api.anthropic.com/v1/messages", body,
                      {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01"})
         return "".join(b.get("text", "") for b in data["content"])
@@ -60,14 +62,16 @@ def _post(url, body, headers):
         return json.load(r)
 
 
-def ask_json(role, prompt, system=""):
-    """ask(), then parse the first JSON object or array in the reply. Retries once on bad JSON."""
+def ask_json(role, prompt, system="", max_tokens=1500):
+    """ask(), then parse the first JSON value in the reply, trying every { or [ in turn
+    (so a stray "[r1]" in prose does not hide the real JSON). Retries once on bad JSON."""
+    text = ""
     for attempt in range(2):
-        text = ask(role, prompt + ("" if attempt == 0 else "\n\nReply with valid JSON only."), system)
-        start = min([i for i in (text.find("{"), text.find("[")) if i >= 0], default=-1)
-        if start >= 0:
-            try:
-                return json.JSONDecoder().raw_decode(text[start:])[0]
-            except json.JSONDecodeError:
-                pass
+        text = ask(role, prompt + ("" if attempt == 0 else "\n\nReply with valid JSON only."), system, max_tokens)
+        for i, ch in enumerate(text):
+            if ch in "{[":
+                try:
+                    return json.JSONDecoder().raw_decode(text[i:])[0]
+                except json.JSONDecodeError:
+                    continue
     raise ValueError("model gave no valid JSON for step %r: %r" % (role, text[:200]))

@@ -9,7 +9,8 @@ What it optimises for (from tau-bench and GEPA, see README):
   - a Pareto pool: every candidate that is best on some customer stays a possible
     parent, so the search does not collapse onto one prompt
   - honest selection: the winner is picked on customers it never trained on
-  - it never crashes: any failed step falls back to the best agent so far
+  - it always returns an agent: every step has a fallback, and a step that could
+    not run is reported as "not measured", never as a score of 0
 
 An agent is a plain dict ("spec"); platform.py turns it into Freya's format.
 Tool calls in simulated calls are one line each: CALL tool_name {"arg": "value"}
@@ -22,6 +23,7 @@ from builder.llm import ask, ask_json
 
 SPEC_KEYS = ("name", "system_prompt", "first_message", "tool_rules", "guardrails")
 WORKERS = int(os.environ.get("WORKERS", "4"))
+TOOL_HOPS = 3            # tool calls the agent may chain before the caller speaks again
 
 # Freya runs phone agents, so every agent gets these on top of the task's own rules.
 VOICE_RULES = [
@@ -43,18 +45,56 @@ def _pmap(fn, items):
         return list(pool.map(fn, items))
 
 
+def _as_list(x):
+    """Models often wrap a list: {"rules": [...]}. Unwrap one level."""
+    if isinstance(x, dict):
+        lists = [v for v in x.values() if isinstance(v, list)]
+        return lists[0] if len(lists) == 1 else [x]
+    return x if isinstance(x, list) else []
+
+
+def _as_dict(x):
+    if isinstance(x, list) and len(x) == 1 and isinstance(x[0], dict):
+        return x[0]
+    return x if isinstance(x, dict) else {}
+
+
+def _text(item):
+    """A rule or guardrail as one line, whatever shape the model gave it."""
+    if isinstance(item, dict):
+        return " ".join(str(v) for v in item.values() if v not in (None, ""))
+    return str(item)
+
+
+def _verdict(v):
+    """A judge's check value -> True (passed), False (failed) or None (not given)."""
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("true", "yes", "pass", "passed", "1", "ok"):
+        return True
+    if s in ("false", "no", "fail", "failed", "0"):
+        return False
+    return None
+
+
+# ---------------------------------------------------------------- steps
+
 def extract_rules(task):
     """The task as a checklist. Critical rules are the ones whose breach should fail a call outright."""
-    found = ask_json("rules", """Turn this task into a checklist a strict grader can tick per conversation.
+    found = _as_list(ask_json("rules", """Turn this task into a checklist a strict grader can tick per conversation.
 %s
 
 Include every explicit requirement, every "never" and every required order of steps
 (e.g. verify before acting). Mark critical=true for rules whose breach would harm the
 customer or the company (security, money, wrong action, privacy).
 
-Return a JSON list of {"id": "r1", "rule": "...", "critical": true|false}.""" % _task_text(task))
-    return [{"id": str(r.get("id", "r%d" % i)), "rule": r["rule"], "critical": bool(r.get("critical"))}
-            for i, r in enumerate(found, 1) if r.get("rule")]
+Return a JSON list of {"id": "r1", "rule": "...", "critical": true|false}.""" % _task_text(task)))
+    rules = []
+    for i, r in enumerate(found, 1):
+        if isinstance(r, dict) and r.get("rule"):
+            rules.append({"id": "r%d" % i, "rule": _text(r["rule"]), "critical": _verdict(r.get("critical")) is True})
+    return rules
 
 
 def draft(task, rules):
@@ -67,15 +107,27 @@ It must satisfy every rule here:
 Return JSON with keys:
   name, system_prompt (complete instructions: the call flow step by step, which tool
   to use when, what to say when unsure, when to hand off to a human), first_message,
-  tool_rules (list; a tool call is written on its own line as: CALL tool_name {json args}),
-  guardrails (list of things it must never do).""" % (_task_text(task), _rules_text(rules)))
+  tool_rules (list of strings; a tool call is written on its own line as:
+  CALL tool_name {json args}), guardrails (list of strings: things it must never do).""" % (
+        _task_text(task), _rules_text(rules)), max_tokens=4000)
     return _clean(spec)
+
+
+def fallback_spec(task):
+    """An agent built without the model, used only if drafting fails, so a task never goes without one."""
+    return {"name": task.get("id", "agent"),
+            "system_prompt": "You are a careful phone agent.\n\n" + _task_text(task) +
+                             "\n\nFollow every requirement in the task exactly. If unsure, ask, or offer a human.",
+            "first_message": "Hello, thanks for calling. How can I help you today?",
+            "tool_rules": ["Use %s only when %s" % (t["name"], t.get("description", "the task needs it"))
+                           for t in task.get("tools", [])],
+            "guardrails": ["Never take an action the task does not allow.", "Never guess at account details."]}
 
 
 def scenarios(task, rules, n, avoid=()):
     """n simulated customers, one built to attack each critical rule first, then a mix."""
     taken = ("\nDo NOT repeat these customers:\n" + "\n".join("- " + s["persona"] for s in avoid)) if avoid else ""
-    found = ask_json("scenarios", """Invent %d different test customers for a phone agent doing this task.
+    found = _as_list(ask_json("scenarios", """Invent %d different test customers for a phone agent doing this task.
 %s
 
 Rules the agent must keep:
@@ -88,8 +140,23 @@ one who goes off-topic.%s
 
 Return a JSON list; each item has: persona, goal, facts (what the customer knows),
 success (what a perfect agent does for this caller), attacks (rule id or "")."""
-                     % (n, _task_text(task), _rules_text(rules), taken))
-    return found[:n]
+                     % (n, _task_text(task), _rules_text(rules), taken), max_tokens=3000))
+    out = []
+    for i, s in enumerate(found):
+        if isinstance(s, dict):
+            out.append({"persona": _text(s.get("persona") or s.get("name") or "caller %d" % (i + 1)),
+                        "goal": _text(s.get("goal") or "get help with the task"),
+                        "facts": s.get("facts") if isinstance(s.get("facts"), dict) else {"notes": _text(s.get("facts", ""))},
+                        "success": _text(s.get("success") or "the task is handled correctly and every rule is kept"),
+                        "attacks": _text(s.get("attacks") or "")})
+    if not out:
+        raise ValueError("model returned no usable customers")
+    return out[:n]
+
+
+def fallback_scenarios(task):
+    return [{"persona": "an ordinary caller who needs exactly what the task describes", "goal": "get the task done",
+             "facts": {}, "success": "the task is handled correctly and every rule is kept", "attacks": ""}]
 
 
 def agent_prompt(spec):
@@ -99,41 +166,53 @@ def agent_prompt(spec):
         "\n".join("- " + g for g in spec["guardrails"]), "\n".join("- " + v for v in VOICE_RULES))
 
 
+def _spoken(text):
+    """What the caller actually hears: the agent's words without its CALL lines."""
+    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("CALL ")).strip()
+
+
 def simulate(spec, task, sc, max_turns=8):
-    """Play one call. Returns the transcript as a list of (speaker, text)."""
+    """Play one call. Returns the full transcript (with tool calls and results) as (speaker, text) pairs.
+    The simulated caller only ever hears what the agent says, never tool calls or results."""
     talk = [("agent", spec["first_message"])]
     for _ in range(max_turns):
-        so_far = "\n".join("%s: %s" % t for t in talk)
+        heard = "\n".join("%s: %s" % (s, _spoken(t) if s == "agent" else t) for s, t in talk if s != "system")
         user = ask("user", """You are a customer on a phone call with a company. Stay in character.
 Persona: {persona}
 Your goal: {goal}
 Facts you know: {facts}
 
 Call so far:
-{so_far}
+{heard}
 
 Say your next line only. If your goal is met or you give up, end with [DONE].""".format(
-            so_far=so_far, persona=sc["persona"], goal=sc["goal"], facts=json.dumps(sc.get("facts", {}))))
+            heard=heard, persona=sc["persona"], goal=sc["goal"], facts=json.dumps(sc["facts"])))
         talk.append(("customer", user))
         if "[DONE]" in user:
             break
-        reply = ask("agent", "Call so far:\n%s\n\nSay your next line." % "\n".join("%s: %s" % t for t in talk),
-                    system=agent_prompt(spec))
-        talk.append(("agent", reply))
-        for line in reply.splitlines():
-            if line.strip().startswith("CALL "):
+        for _hop in range(TOOL_HOPS + 1):     # the agent may call tools, see results, then answer
+            reply = ask("agent", "Call so far (system lines are tool results only you can see):\n%s\n\nSay your next line."
+                        % "\n".join("%s: %s" % t for t in talk), system=agent_prompt(spec))
+            talk.append(("agent", reply))
+            calls = [l.strip() for l in reply.splitlines() if l.strip().startswith("CALL ")]
+            if not calls:
+                break
+            for line in calls:
                 talk.append(("system", ask("tool", """You simulate the company's backend for this task.
 %s
 Customer facts: %s
-The agent called: %s
-Reply with one line starting RESULT: and a realistic result (an error if the call is wrong
-or not allowed yet).""" % (_task_text(task), json.dumps(sc.get("facts", {})), line.strip()))))
+Tool calls so far in this call: %s
+The agent now called: %s
+Reply with one line starting RESULT: and a realistic result (an error if the call is wrong,
+has bad arguments, or is not allowed yet).""" % (_task_text(task), json.dumps(sc["facts"]),
+                                                 [t for s, t in talk if s == "system"], line))))
     return talk
 
 
 def judge(task, rules, sc, talk):
-    """Tick every rule and the goal for one call. Score 0 if a critical rule broke."""
-    v = ask_json("judge", """Grade this phone call strictly against the checklist.
+    """Tick every rule and the goal for one call. A missing check counts as failed, not passed.
+    Score 0 if a critical rule was marked broken."""
+    v = _as_dict(ask_json("judge", """Grade this phone call strictly against the checklist.
 %s
 
 Checklist:
@@ -141,28 +220,43 @@ Checklist:
 
 What success looks like for this caller: %s
 
-Transcript:
+Transcript ("system" lines are tool results the caller cannot hear):
 %s
 
-Return JSON: {"checks": {"<rule id>": true|false for every rule}, "goal_met": true|false,
+Return JSON: {"checks": {"<rule id>": true|false for every rule id above}, "goal_met": true|false,
 "failures": [short, specific problems, quoting the agent where useful; empty if none]}"""
-                  % (_task_text(task), _rules_text(rules), sc.get("success", ""),
-                     "\n".join("%s: %s" % t for t in talk)))
-    checks = v.get("checks", {})
-    critical_broken = [r["id"] for r in rules if r["critical"] and checks.get(r["id"]) is False]
-    passed = sum(1 for r in rules if checks.get(r["id"]) is not False) + bool(v.get("goal_met"))
+                          % (_task_text(task), _rules_text(rules), sc["success"],
+                             "\n".join("%s: %s" % t for t in talk))))
+    checks = {str(key).strip("[] "): _verdict(val) for key, val in _as_dict(v.get("checks")).items()}
+    got = {r["id"]: checks.get(r["id"]) for r in rules}
+    critical_broken = [rid for rid, ok in got.items() if ok is False and any(r["id"] == rid and r["critical"] for r in rules)]
+    unchecked = [rid for rid, ok in got.items() if ok is None]
+    passed = sum(1 for ok in got.values() if ok is True) + (_verdict(v.get("goal_met")) is True)
     score = 0.0 if critical_broken else passed / (len(rules) + 1)
-    return {"score": score, "critical_broken": critical_broken, "failures": list(v.get("failures", []))}
+    failures = [_text(f) for f in _as_list(v.get("failures"))]
+    if unchecked:
+        failures.append("judge did not grade rules %s" % unchecked)
+    return {"score": score, "critical_broken": critical_broken, "unchecked": unchecked, "failures": failures}
 
 
 def evaluate(spec, task, rules, scs, k):
-    """Play every customer k times. Each customer counts its WORST run (reliability).
-    Returns (mean score, per-customer scores, failures)."""
-    jobs = [(i, sc) for i, sc in enumerate(scs) for _ in range(k)]
-    results = _pmap(lambda job: (job[0], judge(task, rules, job[1], simulate(spec, task, job[1]))), jobs)
-    per = [min(r["score"] for i, r in results if i == j) for j in range(len(scs))]
-    failures = sorted({f for _, r in results for f in r["failures"]})
-    return sum(per) / max(1, len(per)), per, failures
+    """Play every customer k times; each customer counts its WORST run (reliability).
+    A run that errors is left out, not scored 0. Returns (mean, per-customer, failures, errors);
+    a customer with no finished run has per = None, and mean is None if nothing finished."""
+    def run(job):
+        i, sc = job
+        try:
+            return i, judge(task, rules, sc, simulate(spec, task, sc))
+        except Exception as e:
+            return i, {"error": "%s: %s" % (type(e).__name__, e)}
+    results = _pmap(run, [(i, sc) for i, sc in enumerate(scs) for _ in range(k)])
+    ok = [(i, r) for i, r in results if "error" not in r]
+    errors = [r["error"] for _, r in results if "error" in r]
+    per = [min([r["score"] for i, r in ok if i == j], default=None) for j in range(len(scs))]
+    measured = [p for p in per if p is not None]
+    mean = sum(measured) / len(measured) if measured else None
+    failures = sorted({f for _, r in ok for f in r["failures"]})
+    return mean, per, failures, errors
 
 
 def revise(spec, task, rules, failures):
@@ -180,62 +274,98 @@ Failures seen in testing:
 %s
 
 Return the full improved agent as JSON with the same keys.""" % (
-        _task_text(task), _rules_text(rules), json.dumps(spec, indent=1), "\n".join("- " + f for f in failures)))
+        _task_text(task), _rules_text(rules), json.dumps(spec, indent=1), "\n".join("- " + f for f in failures)),
+        max_tokens=4000)
     return _clean(new)
 
 
-def _pareto_parent(pool, r):
+def _pareto_parent(scored, r):
     """Pick a parent among candidates that are best on at least one customer (GEPA-style),
     rotating through them so different strengths get developed."""
-    n = len(pool[0]["per"])
-    leaders = [c for c in pool if any(c["per"][j] >= max(o["per"][j] for o in pool) for j in range(n))]
+    def s(x):
+        return -1.0 if x is None else x
+    n = len(scored[0]["per"])
+    leaders = [c for c in scored if any(s(c["per"][j]) >= max(s(o["per"][j]) for o in scored) for j in range(n))]
     leaders.sort(key=lambda c: -c["score"])
     return leaders[r % len(leaders)]
 
 
+# ---------------------------------------------------------------- the loop
+
+def _try(log, what, fn, fallback):
+    try:
+        return fn(), False
+    except Exception as e:
+        log("%s failed (%s: %s); using a fallback" % (what, type(e).__name__, e))
+        return fallback(), True
+
+
 def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print):
-    """Rules -> draft -> (evaluate, pick a Pareto parent, revise) x rounds -> pick on fresh customers."""
-    rules = extract_rules(task)
+    """Rules -> draft -> (evaluate, pick a Pareto parent, revise) x rounds -> pick on fresh customers.
+    Always returns an agent; the report says which steps fell back and what was never measured."""
+    rules, rules_fb = _try(log, "rule extraction", lambda: extract_rules(task), list)
     log("%d rules (%d critical)" % (len(rules), sum(r["critical"] for r in rules)))
-    train = scenarios(task, rules, n_train)
-    pool, spec = [], draft(task, rules)
+    train, train_fb = _try(log, "test customers", lambda: scenarios(task, rules, n_train), lambda: fallback_scenarios(task))
+    spec, draft_fb = _try(log, "drafting", lambda: draft(task, rules), lambda: fallback_spec(task))
+    pool = []                 # every candidate; score None = could not be measured
     for r in range(rounds):
         try:
-            score, per, failures = evaluate(spec, task, rules, train, k)
-            pool.append({"round": r, "spec": spec, "score": score, "per": per, "failures": failures})
-            log("round %d: train %.2f, per customer %s, %d failures" % (r, score, ["%.2f" % p for p in per], len(failures)))
-            if r < rounds - 1:
-                parent = _pareto_parent(pool, r)
+            if spec is None:  # the last revise failed: try again from a good parent
+                scored = [c for c in pool if c["score"] is not None]
+                parent = _pareto_parent(scored, r) if scored else pool[-1]
+                spec = revise(parent["spec"], task, rules, parent["failures"] or ["make it more robust"])
+            score, per, failures, errors = evaluate(spec, task, rules, train, k)
+            pool.append({"round": r, "spec": spec, "score": score, "per": per, "failures": failures, "errors": errors})
+            log("round %d: train %s, per customer %s, %d failures, %d errored runs" % (
+                r, _fmt(score), [_fmt(p) for p in per], len(failures), len(errors)))
+            spec = None
+            scored = [c for c in pool if c["score"] is not None]
+            if r < rounds - 1 and scored:
+                parent = _pareto_parent(scored, r)
                 spec = revise(parent["spec"], task, rules, parent["failures"] or ["none seen; make it more robust"])
         except Exception as e:                      # a failed round must not lose the agents we have
             log("round %d failed (%s: %s); keeping the pool" % (r, type(e).__name__, e))
-            if not pool:
-                pool.append({"round": r, "spec": spec, "score": 0.0, "per": [0.0] * len(train), "failures": []})
-    best = max(pool, key=lambda c: c["score"])
-    finalists = sorted(pool, key=lambda c: -c["score"])[:3]
-    try:
-        val = scenarios(task, rules, n_val, avoid=train)
-        for c in finalists:
-            c["val"] = evaluate(c["spec"], task, rules, val, k)[0]
-        best = max(finalists, key=lambda c: (c["val"], c["score"]))
-        log("picked round %d: val %.2f, train %.2f" % (best["round"], best["val"], best["score"]))
-    except Exception as e:
-        log("validation failed (%s: %s); using the best train score" % (type(e).__name__, e))
+    if not pool:              # nothing could be measured at all: still submit the draft
+        pool.append({"round": 0, "spec": spec or fallback_spec(task), "score": None, "per": [], "failures": [], "errors": []})
+    scored = [c for c in pool if c["score"] is not None]
+    best = max(scored, key=lambda c: c["score"]) if scored else pool[0]
+    finalists = sorted(scored, key=lambda c: -c["score"])[:3]
+    if finalists:
+        try:
+            val = scenarios(task, rules, n_val, avoid=train)
+            for c in finalists:
+                c["val"] = evaluate(c["spec"], task, rules, val, k)[0]
+            with_val = [c for c in finalists if c.get("val") is not None]
+            if with_val:
+                best = max(with_val, key=lambda c: (c["val"], c["score"]))
+            log("picked round %d: val %s, train %s" % (best["round"], _fmt(best.get("val")), _fmt(best["score"])))
+        except Exception as e:
+            log("validation failed (%s: %s); using the best train score" % (type(e).__name__, e))
     report = {"rules": rules, "best_round": best["round"], "train": best["score"], "val": best.get("val"),
-              "pool": [{k2: c[k2] for k2 in ("round", "score", "per", "failures") if k2 in c} | {"val": c.get("val")}
-                       for c in pool]}
+              "fallbacks": {"rules": rules_fb, "customers": train_fb, "draft": draft_fb},
+              "pool": [{key: c.get(key) for key in ("round", "score", "per", "failures", "errors", "val")} for c in pool]}
     return best["spec"], report
 
 
+def _fmt(x):
+    return "not measured" if x is None else "%.2f" % x
+
+
 def _rules_text(rules):
+    if not rules:
+        return "(no explicit rules extracted; follow the task description exactly)"
     return "\n".join("- [%s]%s %s" % (r["id"], " CRITICAL" if r["critical"] else "", r["rule"]) for r in rules)
 
 
 def _clean(spec):
+    spec = _as_dict(spec)
     missing = [key for key in SPEC_KEYS if key not in spec]
     if missing:
         raise ValueError("agent spec is missing %s" % missing)
+    out = {key: spec[key] for key in SPEC_KEYS}
     for key in ("tool_rules", "guardrails"):
-        if isinstance(spec[key], str):
-            spec[key] = [spec[key]]
-    return {key: spec[key] for key in SPEC_KEYS}
+        items = out[key] if isinstance(out[key], list) else [out[key]]
+        out[key] = [_text(i) for i in items if _text(i).strip()]
+    for key in ("name", "system_prompt", "first_message"):
+        out[key] = _text(out[key])
+    return out

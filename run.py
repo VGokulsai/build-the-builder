@@ -9,7 +9,6 @@ failures, the validation scores, and how many model calls it took).
 import argparse
 import json
 import os
-import sys
 
 from builder import core, platform
 from builder.llm import CALLS
@@ -32,12 +31,14 @@ def main(argv=None):
 
     out = os.path.join(a.out, task.get("id", "task"))
     os.makedirs(out, exist_ok=True)
-    json.dump(platform.export(spec, task), open(os.path.join(out, "agent.json"), "w", encoding="utf-8"), indent=1)
-    json.dump(report, open(os.path.join(out, "report.json"), "w", encoding="utf-8"), indent=1)
-    print("wrote %s (best round %d, train %.2f, val %s, %d model calls)" % (
-        out, report["best_round"], report["train"], report["val"], CALLS["n"]))
+    for name, data in (("agent.json", platform.export(spec, task)), ("report.json", report)):
+        with open(os.path.join(out, name), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1, ensure_ascii=False)
+    print("wrote %s (best round %d, train %s, val %s, fallbacks %s, %d model calls)" % (
+        out, report["best_round"], core._fmt(report["train"]), core._fmt(report["val"]),
+        [k for k, v in report["fallbacks"].items() if v] or "none", CALLS["n"]))
     return spec, report
 
 
 if __name__ == "__main__":
-    sys.exit(main() and 0)
+    main()

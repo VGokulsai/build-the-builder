@@ -247,7 +247,8 @@ def evaluate(spec, task, rules, scs, k):
     def run(job):
         i, sc = job
         try:
-            return i, judge(task, rules, sc, simulate(spec, task, sc))
+            talk = simulate(spec, task, sc)
+            return i, dict(judge(task, rules, sc, talk), talk=talk)
         except Exception as e:
             return i, {"error": "%s: %s" % (type(e).__name__, e)}
     results = _pmap(run, [(i, sc) for i, sc in enumerate(scs) for _ in range(k)])
@@ -257,12 +258,18 @@ def evaluate(spec, task, rules, scs, k):
     measured = [p for p in per if p is not None]
     mean = sum(measured) / len(measured) if measured else None
     failures = sorted({f for _, r in ok for f in r["failures"]})
-    return mean, per, failures, errors
+    # the two worst failing calls, so revise() sees what actually happened, not just a summary
+    worst = sorted((r for _, r in ok if r["failures"]), key=lambda r: r["score"])[:2]
+    evidence = ["(score %.2f)\n%s" % (r["score"], "\n".join("%s: %s" % t for t in r["talk"])[-3000:]) for r in worst]
+    return mean, per, failures, errors, evidence
 
 
-def revise(spec, task, rules, failures):
+def revise(spec, task, rules, failures, evidence=()):
+    calls = ("\n\nThe worst failing calls (read where it went wrong):\n" + "\n\n---\n".join(evidence)) if evidence else ""
     new = ask_json("revise", """Improve this phone agent so these failures stop, without breaking what works.
-Be concrete: add the missing step, the missing check, the exact wording to use.
+First find the root cause in the calls below (a missing step, a wrong tool argument, an
+unclear instruction), then fix that cause in the instructions. Keep every part that
+already works. Be concrete: add the missing step, the missing check, the exact wording.
 %s
 
 Rules it must keep:
@@ -272,11 +279,11 @@ Current agent (JSON):
 %s
 
 Failures seen in testing:
-%s
+%s%s
 
 Return the full improved agent as JSON with the same keys.""" % (
-        _task_text(task), _rules_text(rules), json.dumps(spec, indent=1), "\n".join("- " + f for f in failures)),
-        max_tokens=4000)
+        _task_text(task), _rules_text(rules), json.dumps(spec, indent=1),
+        "\n".join("- " + f for f in failures), calls), max_tokens=6000)
     return _clean(new)
 
 
@@ -314,16 +321,19 @@ def build(task, rounds=4, n_train=4, n_val=3, k=2, log=print):
             if spec is None:  # the last revise failed: try again from a good parent
                 scored = [c for c in pool if c["score"] is not None]
                 parent = _pareto_parent(scored, r) if scored else pool[-1]
-                spec = revise(parent["spec"], task, rules, parent["failures"] or ["make it more robust"])
-            score, per, failures, errors = evaluate(spec, task, rules, train, k)
-            pool.append({"round": r, "spec": spec, "score": score, "per": per, "failures": failures, "errors": errors})
+                spec = revise(parent["spec"], task, rules, parent["failures"] or ["make it more robust"],
+                              parent.get("evidence", ()))
+            score, per, failures, errors, evidence = evaluate(spec, task, rules, train, k)
+            pool.append({"round": r, "spec": spec, "score": score, "per": per, "failures": failures,
+                         "errors": errors, "evidence": evidence})
             log("round %d: train %s, per customer %s, %d failures, %d errored runs" % (
                 r, _fmt(score), [_fmt(p) for p in per], len(failures), len(errors)))
             spec = None
             scored = [c for c in pool if c["score"] is not None]
             if r < rounds - 1 and scored:
                 parent = _pareto_parent(scored, r)
-                spec = revise(parent["spec"], task, rules, parent["failures"] or ["none seen; make it more robust"])
+                spec = revise(parent["spec"], task, rules, parent["failures"] or ["none seen; make it more robust"],
+                              parent["evidence"])
         except Exception as e:                      # a failed round must not lose the agents we have
             log("round %d failed (%s: %s); keeping the pool" % (r, type(e).__name__, e))
     if not pool:              # nothing could be measured at all: still submit the draft

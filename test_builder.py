@@ -83,7 +83,7 @@ def sometimes(*a):
         raise ValueError("bad judge JSON")
     return real_judge(*a)
 core.judge = sometimes
-mean, per, failures, errors = core.evaluate(spec, task, report["rules"], core.fallback_scenarios(task) * 2, 2)
+mean, per, failures, errors, evidence = core.evaluate(spec, task, report["rules"], core.fallback_scenarios(task) * 2, 2)
 assert mean == 1.0 and len(errors) == 2, (mean, per, errors)
 core.judge = lambda *a: (_ for _ in ()).throw(ValueError("down"))
 assert core.evaluate(spec, task, report["rules"], core.fallback_scenarios(task), 2)[0] is None
@@ -98,6 +98,17 @@ spec3, report3 = core.build(task, rounds=2, n_train=2, n_val=1, k=1, log=lambda 
 core.extract_rules, core.scenarios, core.draft = saved
 assert report3["fallbacks"] == {"rules": True, "customers": True, "draft": True}, report3["fallbacks"]
 assert spec3["first_message"] and spec3["system_prompt"], spec3
+
+# revise() is shown the worst failing calls themselves, not only the failure summaries
+got = []
+real_revise = core.revise
+def spy_revise(spec_, task_, rules_, failures_, evidence_=()):
+    got.append(evidence_)
+    return real_revise(spec_, task_, rules_, failures_, evidence_)
+core.revise = spy_revise
+core.build(task, rounds=2, n_train=2, n_val=1, k=1, log=lambda s: None)
+core.revise = real_revise
+assert got and got[0] and "customer:" in got[0][0] and "(score 0.00)" in got[0][0], got
 
 # a reply cut off by the length limit is never parsed into a fragment of itself
 from builder.llm import parse_json  # noqa: E402

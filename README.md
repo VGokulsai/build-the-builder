@@ -4,22 +4,29 @@ An agent that builds agents, for YC x Freya's Build the Builder hackathon (10-11
 
 Given a task description and its tools, it:
 
-1. drafts an agent (instructions, tool rules, guardrails, opening line),
-2. invents test customers for the task,
-3. simulates a conversation with each one, with a model playing the customer and the system's tools,
-4. has a judge score every conversation and list what went wrong,
-5. revises the agent to fix those failures, for a few rounds, keeping the best version seen,
-6. re-tests the winner on new customers it never trained on, and reports that score.
+1. **compiles the task into a checklist** of hard rules, marking the critical ones (security, money, privacy, order of steps),
+2. drafts a phone agent that has to satisfy every rule,
+3. **invents test customers, one built to break each critical rule**, plus a mix of easy, confused and off-topic callers,
+4. simulates every call **K times** (a model plays the customer and the backend tools),
+5. grades each call against the checklist: **0 if a critical rule broke**, else the share of checks passed. Each customer counts its **worst** run,
+6. revises the agent from its failures, choosing the parent from a **Pareto pool** (every candidate best on some customer) rather than only the top one,
+7. **picks the winner on fresh customers** it never trained on,
+8. adds phone rules to every agent: short spoken turns, one question at a time, read numbers back.
+
+Why these choices:
+- τ-bench (Yao et al. 2024, arXiv 2406.12045) found strong agents succeed on under half of customer-service tasks and are inconsistent across repeats, and introduced pass^k. Hence the K plays per customer, scored by the worst.
+- GEPA (Agrawal et al., ICLR 2026, arXiv 2507.19457) reports Pareto-based candidate selection beating greedy selection. Hence the pool.
+- Any step that fails (rate limit, outage, bad JSON) is retried, and a failed round never loses the agents already built, because nobody can fix the builder during judging.
 
 ## Run it
 
 Python 3.10+, standard library only.
 
 ```bash
-LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=... python run.py tasks/bank_card_freeze.json --rounds 3 --scenarios 4
+LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=... python run.py tasks/bank_card_freeze.json --rounds 4 --train 4 --val 3 --k 2
 ```
 
-Output goes to `out/<task id>/agent.json` (the agent) and `out/<task id>/report.json` (every round's score and failures, the held-out score, model calls used).
+Output goes to `out/<task id>/agent.json` (the agent) and `out/<task id>/report.json` (the extracted rules, every candidate's scores and failures, validation scores, model calls used). `WORKERS` sets how many calls run in parallel (default 4).
 
 Model backends (`LLM_PROVIDER`): `anthropic`, `openai` (any OpenAI-compatible endpoint: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`), or `stub` (canned answers, no network).
 
@@ -29,7 +36,7 @@ Model backends (`LLM_PROVIDER`): `anthropic`, `openai` (any OpenAI-compatible en
 python test_builder.py
 ```
 
-Runs the whole loop on the stub model, which is rigged so the second revision scores worse than the first. It checks that the builder keeps the best agent rather than the latest.
+Runs the whole loop on the stub model, which is rigged so a critical breach scores 0 and later revisions score worse than the best one. It checks that the builder keeps the best agent, re-scores it on fresh customers, adds the phone rules, and survives a step failing mid-run.
 
 ## Layout
 

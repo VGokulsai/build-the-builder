@@ -8,14 +8,33 @@ Standard library only, so a reproducible run needs no installs.
 """
 import json
 import os
+import threading
+import time
+import urllib.error
 import urllib.request
 
 CALLS = {"n": 0}          # how many model calls this run made (for budgets and logs)
+_lock = threading.Lock()  # calls run in parallel threads
 
 
-def ask(role, prompt, system="", max_tokens=1500):
-    """Send one prompt; return the model's text. `role` names the step (draft, judge...)."""
-    CALLS["n"] += 1
+def ask(role, prompt, system="", max_tokens=1500, tries=4):
+    """Send one prompt; return the model's text. Retries rate limits, server errors
+    and timeouts with backoff, because nobody can touch the builder during judging."""
+    for attempt in range(tries):
+        try:
+            return _ask(role, prompt, system, max_tokens)
+        except urllib.error.HTTPError as e:
+            if e.code not in (408, 409, 429, 500, 502, 503, 504, 529) or attempt == tries - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == tries - 1:
+                raise
+        time.sleep(2 ** attempt * 2)
+
+
+def _ask(role, prompt, system, max_tokens):
+    with _lock:
+        CALLS["n"] += 1
     provider = os.environ.get("LLM_PROVIDER", "stub")
     if provider == "stub":
         from builder.stub import answer

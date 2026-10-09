@@ -8,6 +8,7 @@ Standard library only, so a reproducible run needs no installs.
 """
 import json
 import os
+import subprocess
 import threading
 import time
 import urllib.error
@@ -93,7 +94,30 @@ def _ask(role, prompt, system, max_tokens, timeout=120.0):
         if choice.get("finish_reason") == "length":
             raise Truncated(text)
         return text
+    if provider == "claude-cli":
+        return _claude_cli(prompt, system, timeout)
     raise SystemExit("Unknown LLM_PROVIDER: %r" % provider)
+
+
+def _claude_cli(prompt, system, timeout):
+    """The local `claude` login, headless. The flags strip CLAUDE.md, skills, plugins, tools and
+    MCP servers out of each call (measured 14x cheaper on this machine, see cloud-pet/ask.py).
+    The prompt goes on stdin: Windows caps a command line at 32 KB."""
+    cmd = ["claude", "-p", "--model", os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001"),
+           "--output-format", "json", "--setting-sources", "", "--tools", "", "--strict-mcp-config",
+           "--system-prompt", system or "Follow the user's instructions exactly."]
+    try:
+        out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
+                             encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        raise TimeoutError("claude did not answer in %.0fs" % timeout)
+    try:
+        envelope = json.loads(out.stdout)
+    except ValueError:
+        raise ConnectionError("claude returned no JSON envelope: %s" % (out.stderr or out.stdout)[:200])
+    if envelope.get("is_error"):       # no auth, usage limit, bad flag: the question never reached a model
+        raise ConnectionError("claude error: %s" % str(envelope.get("result"))[:200])
+    return envelope.get("result") or ""
 
 
 def _post(url, body, headers, timeout=120.0):

@@ -167,6 +167,20 @@ assert not any("failed" in m for m in logs), [m for m in logs if "failed" in m] 
 assert report4["seconds"] <= 180, report4["seconds"]
 assert spec4["system_prompt"] and llm.DEADLINE["at"] is None
 
+# tools in the shapes platforms use are read with their exact arguments, and every agent
+# is told those arguments plus the carry-ids-forward habit (the first real run failed on this)
+schema_task = {"description": "d", "tools": [
+    {"type": "function", "function": {"name": "freeze_card", "description": "freeze it", "parameters": {
+        "type": "object", "properties": {"customer_id": {"type": "string"}, "card_last4": {"type": "string", "description": "last 4"},
+                                         "reason": {"type": "string"}}, "required": ["customer_id", "card_last4"]}}},
+    {"name": "lookup", "input_schema": {"properties": {"q": {"type": "string"}}, "required": ["q"]}},
+    {"name": "old_style", "description": "args: {a, b}"}]}
+tt = core.tools_text(schema_task)
+assert "freeze_card(customer_id: string, card_last4: string (last 4), reason?: string)" in tt, tt
+assert "lookup(q: string)" in tt and "old_style(): args: {a, b}" in tt, tt
+prompt = core.agent_prompt(spec, schema_task)
+assert "freeze_card(customer_id" in prompt and core.TOOL_HABITS[1] in prompt, prompt
+
 # a reply cut off by the length limit is never parsed into a fragment of itself
 from builder.llm import parse_json  # noqa: E402
 assert parse_json('```json\n[{"a": 1}, {"b": 2}]\n```') == [{"a": 1}, {"b": 2}]

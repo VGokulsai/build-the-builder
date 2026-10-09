@@ -37,9 +37,37 @@ VOICE_RULES = [
 ]
 
 
+# Every agent also gets these, because the first real run failed on exactly this:
+# an agent called freeze_card without the customer_id that verify_identity had just returned.
+TOOL_HABITS = [
+    "Pass every required argument, spelled exactly as in the tool's signature.",
+    "Reuse ids and values returned by earlier tool results (e.g. a customer_id) in later calls; never invent them.",
+    "If a tool returns an error, read it, fix the arguments and try once more before telling the caller.",
+]
+
+
+def _tool(t):
+    """One tool, in whatever shape the platform gives it: {name, description, parameters}
+    (OpenAI function), {name, input_schema} (Anthropic), {function: {...}} or {args: "..."}."""
+    t = t.get("function", t) if isinstance(t, dict) else {"name": str(t)}
+    schema = t.get("parameters") or t.get("input_schema") or t.get("args") or {}
+    if isinstance(schema, dict) and "properties" in schema:
+        required = set(schema.get("required", []))
+        args = ", ".join("%s%s: %s%s" % (k, "" if k in required else "?", v.get("type", "any"),
+                                          (" (" + v["description"] + ")") if v.get("description") else "")
+                         for k, v in schema["properties"].items())
+    else:
+        args = _text(schema) if schema else ""
+    return {"name": t.get("name", "tool"), "description": t.get("description", ""), "args": args}
+
+
+def tools_text(task):
+    tools = [_tool(t) for t in task.get("tools", [])]
+    return "\n".join("- %s(%s): %s" % (t["name"], t["args"], t["description"]) for t in tools) or "(none)"
+
+
 def _task_text(task):
-    tools = "\n".join("- %s: %s" % (t["name"], t.get("description", "")) for t in task.get("tools", []))
-    return "TASK:\n%s\n\nTOOLS:\n%s" % (task["description"], tools or "(none)")
+    return "TASK:\n%s\n\nTOOLS (name(arguments; ? = optional): what it does):\n%s" % (task["description"], tools_text(task))
 
 
 def _pmap(fn, items):
@@ -161,10 +189,12 @@ def fallback_scenarios(task):
              "facts": {}, "success": "the task is handled correctly and every rule is kept", "attacks": ""}]
 
 
-def agent_prompt(spec):
-    """The full instructions the agent runs with: its own, plus the phone rules."""
-    return "%s\n\nTool rules:\n%s\n\nNever:\n%s\n\nPhone style:\n%s" % (
-        spec["system_prompt"], "\n".join("- " + r for r in spec["tool_rules"]),
+def agent_prompt(spec, task=None):
+    """The full instructions the agent runs with: its own, the tool signatures (when the task is
+    known), the standing tool habits and the phone rules."""
+    tools = ("\n\nTools you can call (exact arguments):\n%s" % tools_text(task)) if task and task.get("tools") else ""
+    return "%s%s\n\nTool rules:\n%s\n\nNever:\n%s\n\nPhone style:\n%s" % (
+        spec["system_prompt"], tools, "\n".join("- " + r for r in spec["tool_rules"] + TOOL_HABITS),
         "\n".join("- " + g for g in spec["guardrails"]), "\n".join("- " + v for v in VOICE_RULES))
 
 
@@ -194,7 +224,7 @@ Say your next line only. If your goal is met or you give up, end with [DONE]."""
             break
         for _hop in range(TOOL_HOPS + 1):     # the agent may call tools, see results, then answer
             reply = ask("agent", "Call so far (system lines are tool results only you can see):\n%s\n\nSay your next line."
-                        % "\n".join("%s: %s" % t for t in talk), system=agent_prompt(spec))
+                        % "\n".join("%s: %s" % t for t in talk), system=agent_prompt(spec, task))
             talk.append(("agent", reply))
             calls = [l.strip() for l in reply.splitlines() if l.strip().startswith("CALL ")]
             if not calls:

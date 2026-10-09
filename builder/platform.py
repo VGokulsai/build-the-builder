@@ -9,4 +9,4 @@ from builder.core import agent_prompt
 def export(spec, task):
     """Our agent spec -> whatever Freya's platform takes for one agent."""
     # ponytail: our own format until the platform format is known (10 Oct kickoff)
-    return {"task_id": task.get("id"), "prompt": agent_prompt(spec), **spec}
+    return {"task_id": task.get("id"), "prompt": agent_prompt(spec, task), **spec}

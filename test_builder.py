@@ -307,6 +307,17 @@ del os.environ["LLM_MODEL_JUDGE"]
 os.environ["LLM_PROVIDER"] = real_p or "stub"
 assert cmds[0][cmds[0].index("--model") + 1] == "strong", cmds
 
+# tool calls are seen in whatever format the model drifts into (day5: Haiku's own <call_tool> JSON was missed,
+# so the backend never answered and every score measured that)
+day5 = 'One moment while I verify your identity in our system.\n\n<call_tool>\n{\n  "tool_name": "verify_identity",\n  "arguments": {\n    "date_of_birth": "1990-03-04",\n    "last4_of_phone": "4471"\n  }\n}\n</call_tool>'
+said, calls = core.split_calls(day5)
+assert said == "One moment while I verify your identity in our system.", said
+assert calls == ['CALL verify_identity {"date_of_birth": "1990-03-04", "last4_of_phone": "4471"}'], calls
+assert core.split_calls('Sure. CALL freeze_card {"card_last4": "1234"} done')[1] == ['CALL freeze_card {"card_last4": "1234"}']
+assert core.split_calls('```json\n{"name": "list_cards", "arguments": "{\\"customer_id\\": \\"C1\\"}"}\n```')[1] == ['CALL list_cards {"customer_id": "C1"}']
+assert core.split_calls('{"function": {"name": "f", "arguments": {}}}')[1] == ["CALL f {}"]
+assert core.split_calls("Your card ending 1234 is frozen.") == ("Your card ending 1234 is frozen.", [])
+
 # the tool simulator knows what the test expects, so it cannot contradict the customer it serves
 tool_prompts = []
 real_ask = core.ask

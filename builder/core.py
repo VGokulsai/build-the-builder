@@ -17,6 +17,7 @@ Tool calls in simulated calls are one line each: CALL tool_name {"arg": "value"}
 """
 import json
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from builder import llm
@@ -41,6 +42,8 @@ VOICE_RULES = [
 # Every agent also gets these, because the first real run failed on exactly this:
 # an agent called freeze_card without the customer_id that verify_identity had just returned.
 TOOL_HABITS = [
+    'To use a tool, write it on its own line exactly like: CALL tool_name {"arg": "value"} '
+    "(no XML tags, no code blocks, no other format), then stop and wait for the RESULT.",
     "Pass every required argument, spelled exactly as in the tool's signature.",
     "Reuse ids and values returned by earlier tool results (e.g. a customer_id) in later calls; never invent them.",
     "If a tool returns an error, read it, fix the arguments and try once more before telling the caller.",
@@ -243,6 +246,64 @@ def agent_prompt(spec, task=None):
         "\n".join("- " + g for g in spec["guardrails"]), "\n".join("- " + v for v in VOICE_RULES))
 
 
+_ARG_KEYS = ("arguments", "args", "parameters", "input", "params")
+_CALL_TAGS = re.compile(r"</?(call_tool|tool_call|function_call|tool_use|invoke|function_calls)[^>]*>")
+
+
+def split_calls(reply):
+    """The agent's spoken words, and its tool calls as canonical CALL lines.
+    Models drift from the CALL format: on 10 Oct Haiku wrote <call_tool>{"tool_name": ...,
+    "arguments": ...}</call_tool>, no call was seen, the backend never answered and every
+    score measured that instead of the agent. So every common shape is read:
+    CALL name {args} anywhere in a line, and any JSON object naming a tool with its arguments."""
+    dec, found, spans = json.JSONDecoder(), [], []
+    for m in re.finditer(r"\bCALL\s+([A-Za-z_][\w.]*)", reply):
+        args, end = {}, m.end()
+        gap = len(reply[end:]) - len(reply[end:].lstrip(" \t"))
+        if reply[end + gap:end + gap + 1] == "{":
+            try:
+                args, n = dec.raw_decode(reply[end + gap:])
+                end += gap + n
+            except ValueError:
+                pass
+        found.append((m.start(), m.group(1), args))
+        spans.append((m.start(), end))
+    i = 0
+    while True:
+        k = reply.find("{", i)
+        if k < 0:
+            break
+        if any(a <= k < b for a, b in spans):
+            i = k + 1
+            continue
+        try:
+            v, n = dec.raw_decode(reply[k:])
+        except ValueError:
+            i = k + 1
+            continue
+        i = k + n
+        if isinstance(v, dict) and isinstance(v.get("function"), dict):    # OpenAI shape
+            v = v["function"]
+        if not isinstance(v, dict):
+            continue
+        name = next((v[key] for key in ("tool_name", "tool", "name", "function") if isinstance(v.get(key), str)), None)
+        if name and (any(key in v for key in _ARG_KEYS) or "tool_name" in v or "tool" in v):
+            args = next((v[key] for key in _ARG_KEYS if key in v), {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {"input": args}
+            found.append((k, name, args))
+            spans.append((k, k + n))
+    spoken = reply
+    for a, b in sorted(spans, reverse=True):
+        spoken = spoken[:a] + spoken[b:]
+    spoken = re.sub(r"```\w*\s*```", "", _CALL_TAGS.sub("", spoken))
+    spoken = "\n".join(l for l in spoken.splitlines() if l.strip()).strip()
+    return spoken, ["CALL %s %s" % (name, json.dumps(args, ensure_ascii=False)) for _, name, args in sorted(found)]
+
+
 def _spoken(text):
     """What the caller actually hears: the agent's words without its CALL lines."""
     return "\n".join(l for l in text.splitlines() if not l.strip().startswith("CALL ")).strip()
@@ -301,8 +362,8 @@ Say your next line only. If your goal is met or you give up, end with [DONE]."""
         for _hop in range(TOOL_HOPS + 1):     # the agent may call tools, see results, then answer
             reply = ask("agent", "Call so far (system lines are tool results only you can see):\n%s\n\nSay your next line."
                         % "\n".join("%s: %s" % t for t in talk), system=agent_prompt(spec, task))
-            talk.append(("agent", reply))
-            calls = [l.strip() for l in reply.splitlines() if l.strip().startswith("CALL ")]
+            spoken, calls = split_calls(reply)
+            talk.append(("agent", "\n".join([spoken] + calls).strip()))   # stored with canonical CALL lines
             if not calls:
                 break
             for line in calls:

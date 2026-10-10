@@ -6,6 +6,11 @@
  "ref-a": {
   "workflow_id": "81708f33-57fe-43f8-906d-be69212f3d43",
   "agent_id": "a7da0371-40d9-4c25-bd78-116fc7f7de69",
+  "version": 5
+ },
+ "ref-b": {
+  "workflow_id": "af994815-7284-4a51-8703-3db186fcff11",
+  "agent_id": "eb44e825-be41-4dc4-974c-74a88a4d54a9",
   "version": 2
  }
 }

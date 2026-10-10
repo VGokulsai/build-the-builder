@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from kitlib import wf, datekit  # noqa: E402
 
+# BRIEF A section 7: business days are Monday to Friday except these holidays.
 HOLIDAYS = ["2026-10-26", "2026-11-11", "2026-11-26", "2026-12-25", "2027-01-01"]
 LIB = datekit.date_lib(HOLIDAYS)
 
@@ -24,11 +25,13 @@ try:
     today = to_date(now)
     hhmm = now[11:16] if len(now) >= 16 else '00:00'
     nb = next_bd(today)
+    # BRIEF A rule 30: attempt 1 = last business day of this week; if today is that day, of next week.
     a1 = last_bd_of_week(today)
     if a1 is None or a1 <= today:
         a1 = last_bd_of_week(today + datetime.timedelta(days=7))
     vars['today_iso'] = today.isoformat()
     vars['attempt1_date'] = a1.isoformat()
+    # BRIEF A rule 6: callback today or the next business day, 10:00-19:00, later than now.
     cb_today = ('today ' + say(today) + ' from ' + max(hhmm, '10:00') + ' to 19:00') if hhmm < '19:00' else ''
     vars['callback_window'] = ((cb_today + ', or ') if cb_today else '') + say(nb) + ' from 10:00 to 19:00'
     lines = ['Now: ' + say(today) + ', time ' + hhmm + '.',
@@ -46,6 +49,7 @@ except Exception as e:
 
 # The product facts are computed in get_account's post-hook, where the products are in hand.
 ACCOUNT_HOOK = LIB + '''
+# BRIEF A rule 17: product names in words.
 WORDS = dict(credit_card='credit card', personal_loan='personal loan', car_loan='car loan')
 if d.get('ok') and isinstance(d.get('products'), list):
     today = to_date(vars.get('now'))
@@ -55,6 +59,7 @@ if d.get('ok') and isinstance(d.get('products'), list):
     prods, lines = [], []
     for p in d['products']:
         late = int(p.get('days_late') or 0)
+        # BRIEF A rule 18: bands by days_late, deadline = Nth business day after today; rule 25: floor field per type.
         band = 'early' if late <= 7 else 'late'
         deadline = add_bd(today, 12 if band == 'early' else 7)
         floor = p.get('minimum_payment') if p.get('type') == 'credit_card' else p.get('instalment_amount')
@@ -64,7 +69,7 @@ if d.get('ok') and isinstance(d.get('products'), list):
         a1_date = a1 if a1 <= deadline else deadline
         prods.append(dict(id=p.get('product_id'), name=name, past_due=float(p.get('past_due') or 0),
                           floor=float(floor or 0), deadline=deadline.isoformat(), band=band,
-                          attempts=1 if band == 'early' else 2, a1=a1_date.isoformat()))
+                          attempts=1 if band == 'early' else 2, a1=a1_date.isoformat()))  # BRIEF A rule 18: attempts per band
         q = prods[-1]
         txt = (q['id'] + ': the ' + name + '. Past due ' + money(q['past_due']) + ' dollars, ' + str(late) + ' days late. '
                + band.capitalize() + ' band: latest allowed promise date (deadline) ' + say(deadline) + '. '
@@ -88,6 +93,7 @@ else:
     nxt = 'The account could not be loaded. Tell the customer you cannot see the account details right now.'
 '''
 
+# BRIEF A rules 19, 20, 23, 27, 36 are checked here; replace them with the new brief's date and amount rules.
 # Guard: a promise the brief does not allow never reaches the bank. The request is sent to a
 # path that does not exist instead, and the post-hook tells the agent what to offer.
 PROMISE_GUARD = LIB + '''
@@ -172,7 +178,7 @@ import json
 b = config.get('body') or dict()
 q = vars.get('transfer_queue') or ''
 done = json.loads(vars.get('promises_done') or '[]')
-TQ = dict(restructuring='restructuring', general='human', support='support')
+TQ = dict(restructuring='restructuring', general='human', support='support')  # BRIEF A table: transfer queue -> reason
 if q:
     b['outcome'] = 'transferred'
     b['reason'] = TQ.get(q, q)
@@ -183,6 +189,7 @@ if b.get('outcome') in ('promise', 'paid'):
 config['body'] = b
 '''
 
+# BRIEF B closing section: no promise -> paid if every note is paid, else no_promise with the first non-paid note's reason.
 CLOSE_GUARD_B = '''
 import json
 b = config.get('body') or dict()
@@ -218,6 +225,7 @@ else:
     nxt = 'close_call failed. CALL close_call again once with the same values.'
 '''
 
+# BRIEF A rules 11-14: the questions, their order, the swapped-date hint and the wrong-answer limit.
 VERIFY_HOOK = '''
 left = d.get('wrong_answers_left')
 if d.get('hint') == 'day_month_swapped':
@@ -243,6 +251,7 @@ else:
 
 # ----------------------------------------------------------------- prompts
 
+# BRIEF: every prompt below restates the brief's rules. Rewrite them from the new brief; keep the shape.
 SYSTEM = """You are the digital assistant of Freya Bank, on an outbound phone call. Speak English. One or two short sentences per turn, one question at a time.
 Rules for the whole call:
 - Never invent figures, dates or reasons. If you do not have the information, say you do not have that information.
@@ -288,7 +297,7 @@ How the call goes:
 1. Say you are calling from the collections team about a late payment. Name the product in words, the past-due amount and how many days late it is. Then ask exactly: "Can you make this payment today?"
 2. Always propose amounts yourself. First ask for the full past-due amount. Never ask how much they can pay.
 3. A date or an amount the customer proposes is never a refusal. Check it against the facts: a promise date must be today or later, a business day, and not after the deadline. If they name a weekend day or a holiday not after the deadline, offer the next business day. If their date is after the deadline, say the latest date you can record is the deadline and offer it; if they refuse the deadline, that is a flat refusal. If they give a vague period (next week, end of the month, when my salary comes), ask once for the exact day; if they still give none, propose the deadline. "Next Friday" means Friday of the following calendar week, "this Friday" the one in the current week.
-4. If they say the full amount is too much: offer the floor once and say that the rest stays overdue. An amount from the floor up to the full amount is accepted. Below the floor: say it cannot be recorded and offer the floor once.
+4. If they say the full amount is too much: make ONE offer that names the floor and the attempt 1 date together, for example: "I can accept the minimum payment of <floor> dollars; the rest stays overdue. Could you pay that on <attempt 1 date>?" That offer is attempt 1. Never name the floor again, except in attempt 2 (on the deadline). If they ask what the minimum is, say it is the amount you just offered. An amount from the floor up to the full amount is accepted. Below the floor: say it cannot be recorded and offer the floor once.
 5. A flat refusal or a non-answer uses one persuasion attempt (the attempts are in the facts). When the attempts are used up, stop: do not repeat an offer they refused. Say goodbye and CALL close_call with outcome no_promise and reason refused.
 6. When you have an amount and a date: read back the product, the amount and the date and ask "Do you confirm?". CALL create_promise only after a clear yes. If they change the date or the amount, check it again and read it back again.
 7. After the promise is recorded, say "You will receive a text message confirming this promise.", thank them, say goodbye and CALL close_call with outcome promise.
@@ -314,7 +323,7 @@ How the call goes:
 3. Always propose amounts yourself; first the full past-due amount. Never ask how much they can pay.
 4. A date or amount the customer proposes is never a refusal. Check it against that product's facts: today or later, a business day, not after that product's deadline. Weekend or holiday not after the deadline: offer the next business day. After the deadline: say the latest date you can record is the deadline and offer it; refusing the deadline is a flat refusal. Vague period: ask once for the exact day; if none, propose the deadline. "Next Friday" = Friday of the following calendar week.
 5. If they name one date for everything and it is after one product's deadline, that product goes on its own deadline: say so in the read-back. The others keep the date they named.
-6. Full amount too much: offer the floor once and say the rest stays overdue. Floor up to full amount: accept. Below the floor: say it cannot be recorded and offer the floor once.
+6. Full amount too much for a product: make ONE offer that names that product's floor and its attempt 1 date together ("I can accept the minimum payment of <floor> dollars; the rest stays overdue. Could you pay that on <date>?"). That offer is attempt 1. Never name that floor again except in attempt 2 on the deadline. Floor up to full amount: accept. Below the floor: say it cannot be recorded and offer the floor once.
 7. A flat refusal uses one attempt for that product. When a product's attempts are used up, stop for that product and CALL add_note with that product_id and reason refused. Do not repeat a refused offer.
 8. Read all agreed promises back together (product, amount, date each) and ask "Do you confirm?" once. After a clear yes, CALL create_promise once per product, one call per message.
 9. After the promises are recorded, say "You will receive a text message confirming this promise."
@@ -351,7 +360,9 @@ def build(brief):
     nodes["setup"] = wf.code_node("setup", SETUP, "opening")
     nodes["opening"] = wf.conversation(
         "opening", OPENING,
-        on_enter=wf.say("Hello, this is the digital assistant of Freya Bank. This call is recorded. Am I speaking with {{title}} {{last_name}}?"),
+        # BRIEF A rules 1-2: required first sentence and the confirmation question.
+        on_enter=wf.say("Hello, this is the digital assistant of Freya Bank. We keep a recording of this call. Am I speaking with {{title}} {{last_name}}?"),
+        # BRIEF A outcome table: only the outcomes possible before identity is checked.
         tools=[close_tool(["not_reached", "not_verified", "transferred"], ["unclear", "wrong_number", "deceased", "declined", "human"]),
                transfer_tool(["general"])],
         extraction=[wf.extract("who", "string", "Who is on the line, from their last message. customer: they clearly confirmed they are the named person (yes, that's me, speaking, or their own name). someone_else: they are another person, for example a relative, and the customer exists. Empty if not clear yet.",
@@ -386,7 +397,7 @@ def build(brief):
                     model_fields=("product_id", "amount", "date"), baked=cust,
                     field_help={"product_id": "The product id from the account facts, for example p1.", "amount": "Amount in dollars, a number.",
                                 "date": "Promise date as YYYY-MM-DD."},
-                    pre_code=PROMISE_GUARD,
+                    pre_code=PROMISE_GUARD, retries=1,   # a 500 recorded nothing and may be repeated (tool API); brief: try once more
                     hook_rules=PROMISE_HOOK % (" CALL add_note with that product_id and reason service_error, then continue." if multi else
                                                " Say goodbye and CALL close_call with outcome no_promise and reason service_error.")),
         transfer_tool(["restructuring", "general", "support"]),

@@ -133,6 +133,35 @@ time. Wait 20 seconds before testing a new version.
 
 Finish with one line: slot, workflow_id, agent_id, lint result, local tests result, practice result if any.
 
+## Lessons from the practice runs (each one failed a customer once)
+
+- The judge counts literally. "Offered once" means the amount is named once in the whole call. When the
+  brief says to offer something once, make that the only time it is said: merge it with the next step
+  (e.g. name the floor together with the attempt-1 date in one sentence) and tell the agent never to
+  repeat it. After a refusal, never add "just to be sure, you cannot pay?": that is an extra attempt.
+  Write each persuasion attempt as one finished proposal in the facts and say: one proposal per attempt.
+- Words the brief forbids or ties to an event are matched literally too. The opening said "this call is
+  recorded" and the judge read it as claiming a promise was recorded. Phrase required disclosures with
+  different words when they collide with a checked word ("we keep a recording of this call").
+- A write that failed with a service error never reached the post-hook: the agent saw a raw error and
+  gave up. Writes that the tool API says may be repeated get `retries=1` in the tool config (the
+  platform retries once); the post-hook still handles the second failure.
+- An HTTP error (404, 500) skips the post-hook: the agent sees only "API request failed: <raw body>".
+  So a guard never blocks by breaking the URL. It rewrites the blocked write into a harmless read of the
+  same API (`get_account` with the same customer_id: status 200, changes nothing), and the write's
+  post-hook, seeing the block flag, clears the result and says exactly what to offer instead.
+- Separate "too much" from "no". An offer the brief reserves for one situation (the floor when the amount
+  is too much) must say so, or the agent uses it as an extra attempt after a plain refusal.
+- With several products, the agent mixes up whose deadline is whose. Facts list each product with its own
+  deadline; the prompt says to check a shared date against EACH product; the guard catches the rest.
+- After `--save`, wait 20 seconds before a test: a run started at once can still use the old version.
+- The quick chat route skips the first code node, so anything a later node needs (today's date facts)
+  is recomputed where it is used (the account post-hook does this).
+- The dialogue model will compute dates from the real clock if it has no date facts. Always give it
+  "Today is <now>" and a calendar table, and let the guard catch the rest.
+- Extraction enums route reliably (who is on the line); results route deterministically (all verified,
+  close_call ok). Keep `matches_intent` for nothing that a variable can decide.
+
 ## Rules
 
 - Never edit the agent on the platform by hand. Change agent.py and save.

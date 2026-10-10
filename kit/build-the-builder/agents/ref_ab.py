@@ -128,14 +128,19 @@ else:
     elif amt < p['floor'] - 0.001:
         why = 'the amount is below the floor. Say it cannot be recorded and offer the floor ' + money(p['floor']) + ' dollars once.'
 if why:
+    # A failed HTTP call skips the post-hook and the agent sees only the raw error. So a blocked
+    # promise becomes a harmless read of the same API (status 200, changes nothing), and the
+    # post-hook replaces its result with what to offer instead.
     vars['promise_block'] = why
-    config['url'] = str(config.get('url')) + '_blocked_by_rules'
+    config['url'] = str(config.get('url')).rsplit('/', 1)[0] + '/get_account'
+    config['body'] = dict(customer_id=b.get('customer_id'))
 '''
 
 PROMISE_HOOK = '''
 blk = vars.get('promise_block') or ''
 pid = str(vars.get('create_promise_args.product_id') or '')
 if blk:
+    d.clear()
     d['ok'] = False
     d['error'] = 'not allowed by the bank rules'
     nxt = 'NOT recorded, nothing was sent to the bank: ' + blk + ' Never say it is recorded.'
@@ -298,7 +303,7 @@ How the call goes:
 2. Always propose amounts yourself. First ask for the full past-due amount. Never ask how much they can pay.
 3. A date or an amount the customer proposes is never a refusal. Check it against the facts: a promise date must be today or later, a business day, and not after the deadline. If they name a weekend day or a holiday not after the deadline, offer the next business day. If their date is after the deadline, say the latest date you can record is the deadline and offer it; if they refuse the deadline, that is a flat refusal. If they give a vague period (next week, end of the month, when my salary comes), ask once for the exact day; if they still give none, propose the deadline. "Next Friday" means Friday of the following calendar week, "this Friday" the one in the current week.
 4. If they say the full amount is too much: make ONE offer that names the floor and the attempt 1 date together, for example: "I can accept the minimum payment of <floor> dollars; the rest stays overdue. Could you pay that on <attempt 1 date>?" That offer is attempt 1. Never name the floor again, except in attempt 2 (on the deadline). If they ask what the minimum is, say it is the amount you just offered. An amount from the floor up to the full amount is accepted. Below the floor: say it cannot be recorded and offer the floor once.
-5. A flat refusal or a non-answer uses one persuasion attempt (the attempts are in the facts). When the attempts are used up, stop: do not repeat an offer they refused. Say goodbye and CALL close_call with outcome no_promise and reason refused.
+5. The floor offer of step 4 is only for when the customer says the amount is too much. A plain refusal ("no", "I am not paying") is not "too much": answer it with the next listed attempt, never with the floor offer. A flat refusal or a non-answer uses one persuasion attempt. Each attempt is exactly one proposal written in the facts (attempt 1, then attempt 2 if the facts list one), said once. After a refusal, never ask "just to be sure" or rephrase the same offer: go straight to the next listed attempt, or, when the attempts are used up, stop. Then say goodbye and CALL close_call with outcome no_promise and reason refused.
 6. When you have an amount and a date: read back the product, the amount and the date and ask "Do you confirm?". CALL create_promise only after a clear yes. If they change the date or the amount, check it again and read it back again.
 7. After the promise is recorded, say "You will receive a text message confirming this promise.", thank them, say goodbye and CALL close_call with outcome promise.
 Other situations:
@@ -322,9 +327,9 @@ How the call goes:
 2. If not, go through the products one by one in the order above. Do not ask about today again for each product. Each product starts at its attempt 1 and has its own persuasion attempts.
 3. Always propose amounts yourself; first the full past-due amount. Never ask how much they can pay.
 4. A date or amount the customer proposes is never a refusal. Check it against that product's facts: today or later, a business day, not after that product's deadline. Weekend or holiday not after the deadline: offer the next business day. After the deadline: say the latest date you can record is the deadline and offer it; refusing the deadline is a flat refusal. Vague period: ask once for the exact day; if none, propose the deadline. "Next Friday" = Friday of the following calendar week.
-5. If they name one date for everything and it is after one product's deadline, that product goes on its own deadline: say so in the read-back. The others keep the date they named.
+5. If they name one date for everything, check it against EACH product's own deadline in the facts. A product whose deadline is before that date goes on its own deadline: say so in the read-back. The others keep the date they named.
 6. Full amount too much for a product: make ONE offer that names that product's floor and its attempt 1 date together ("I can accept the minimum payment of <floor> dollars; the rest stays overdue. Could you pay that on <date>?"). That offer is attempt 1. Never name that floor again except in attempt 2 on the deadline. Floor up to full amount: accept. Below the floor: say it cannot be recorded and offer the floor once.
-7. A flat refusal uses one attempt for that product. When a product's attempts are used up, stop for that product and CALL add_note with that product_id and reason refused. Do not repeat a refused offer.
+7. The floor offer of step 6 is only for when the customer says that product's amount is too much. A plain refusal ("no", "I am not paying it") is not "too much": answer it with that product's next listed attempt, never with the floor offer. A flat refusal uses one attempt for that product. Each attempt is exactly one proposal written in that product's facts (attempt 1, then attempt 2 if listed), said once. After a refusal, never ask "just to be sure" or rephrase the same offer: go straight to that product's next listed attempt, or, when its attempts are used up, stop for that product (it gets an add_note with reason refused at the end) and move to the next product.
 8. Read all agreed promises back together (product, amount, date each) and ask "Do you confirm?" once. After a clear yes, CALL create_promise once per product, one call per message.
 9. After the promises are recorded, say "You will receive a text message confirming this promise."
 10. Every product without a promise gets one add_note with its product_id and a reason: refused, hardship, dispute, paid or service_error. Then thank them, say goodbye and CALL close_call (outcome promise if any promise was recorded; the bank system corrects the outcome from the records).

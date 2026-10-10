@@ -42,18 +42,20 @@ for brief in ("A", "B"):
              ({"product_id": "p1", "amount": 300, "date": "2026-10-13"}, "past")]
     for body, want in cases:
         c = pre(cp, body, v)
-        blocked = c["url"].endswith("_blocked_by_rules")
+        blocked = c["url"].endswith("/get_account")
+        assert not blocked or c["body"] == {"customer_id": None} or set(c["body"]) == {"customer_id"}, c["body"]
         assert blocked == bool(want) and want in v["promise_block"], (body, v["promise_block"], c["url"])
     v["create_promise_args.product_id"] = "p1"; pre(cp, cases[0][0], v)
     r = post(cp, {"ok": True, "promise_id": "x"}, v)
     assert json.loads(v["promises_done"]) == ["p1"] and "text message" in r["data"]["what_to_do_next"]
-    c = pre(cp, cases[0][0], v); assert c["url"].endswith("_blocked_by_rules") and "already recorded" in v["promise_block"]
+    c = pre(cp, cases[0][0], v); assert c["url"].endswith("/get_account") and "already recorded" in v["promise_block"]
     # service failure: first retry, then give up
     v2 = dict(v, promises_done="[]", promise_block=""); v2["create_promise_args.product_id"] = "p2"
     r = post(cp, {"ok": False, "error": "service unavailable"}, v2); assert "again" in r["data"]["what_to_do_next"]
     r = post(cp, {"ok": False, "error": "service unavailable"}, v2); assert "failed twice" in r["data"]["what_to_do_next"]
     # blocked promise reads as not recorded
-    v3 = dict(v, promise_block="the date is in the past."); r = post(cp, {"ok": False, "error": "not found"}, v3)
+    v3 = dict(v, promise_block="the date is in the past."); r = post(cp, {"ok": True, "products": [{"product_id": "p1"}]}, v3)
+    assert "products" not in r["data"] and r["data"]["ok"] is False, r["data"]
     assert r["data"]["what_to_do_next"].startswith("NOT recorded")
     # close_call guard: a recorded promise wins, a transfer wins over it, reason dropped for promise
     cc = tool(w, "negotiate", "close_call")

@@ -27,6 +27,7 @@ MUTANTS = [
      "    score = 0.0 if critical_broken else share", "breaches give no learning signal"),
     ("run.py", '    task["id"] = str(task.get("id") or os.path.splitext(os.path.basename(a.task))[0])',
      '    task["id"] = str(task.get("id") or "task")', "id-less tasks overwrite each other"),
+    ("builder/core.py", '"\\n".join("- " + p for p in PLAYBOOK)', '""', "draft written without the playbook"),
 ]
 
 

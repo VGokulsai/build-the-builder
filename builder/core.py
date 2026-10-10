@@ -47,6 +47,25 @@ TOOL_HABITS = [
 ]
 
 
+# Standard practice for phone agents at banks, insurers and fintechs (Freya's customers). Given to the
+# first draft as defaults, so rewrites polish a sound agent instead of rediscovering the basics.
+# Only the draft sees these; the judge still scores against the task's own rules.
+PLAYBOOK = [
+    "Verify the caller with the task's verification step before sharing or changing anything about an "
+    "account. General questions (hours, how a process works) need no verification.",
+    "If verification fails, do not say which detail was wrong. Allow a second try, then offer a human.",
+    "Discuss an account only with its holder. A relative or friend calling gets general help, not account details or actions.",
+    "Never ask for a PIN, password, full card number, CVV or one-time code unless a tool explicitly needs it.",
+    "Before any action that changes something (freeze, cancel, payment, claim filing), say exactly what "
+    "will happen and get a clear yes.",
+    "Never promise an outcome the tools have not confirmed (approval, refund, payout amount or date).",
+    "Never invent policy numbers, fees, balances or dates. If a tool does not give it, say you cannot confirm it.",
+    "No financial, legal or medical advice; offer a specialist instead.",
+    "Fraud, a lost or stolen card, or a caller in distress is urgent: secure the account or hand off right away.",
+    "End by recapping what was done, any reference number, and the next step.",
+]
+
+
 def _tool(t):
     """One tool, in whatever shape the platform gives it: {name, description, parameters}
     (OpenAI function), {name, input_schema} (Anthropic), {function: {...}} or {args: "..."}."""
@@ -153,12 +172,16 @@ def draft(task, rules):
 It must satisfy every rule here:
 %s
 
+Also follow standard practice for banks and insurers where it fits this task
+(the task's own rules win if they differ):
+%s
+
 Return JSON with keys:
   name, system_prompt (complete instructions: the call flow step by step, which tool
   to use when, what to say when unsure, when to hand off to a human), first_message,
   tool_rules (list of strings; a tool call is written on its own line as:
   CALL tool_name {json args}), guardrails (list of strings: things it must never do).""" % (
-        _task_text(task), _rules_text(rules)), max_tokens=4000)
+        _task_text(task), _rules_text(rules), "\n".join("- " + p for p in PLAYBOOK)), max_tokens=4000)
     return _clean(spec)
 
 

@@ -290,4 +290,12 @@ assert parse_json('```json\n[\n {"id": "r1", "critical": true},\n {"id": "r2", "
 assert parse_json('{"checks": {"r1": true}, "failures": ["did not proceed to') is None
 assert parse_json('See rule [r1]. Here: {"x": 1}') == {"x": 1}
 
+# the first draft is written with the bank/insurer playbook in front of it
+seen = []
+real_ask_json = core.ask_json
+core.ask_json = lambda role, prompt, *a, **kw: seen.append(prompt) or real_ask_json(role, prompt, *a, **kw)
+core.draft(task, report["rules"])
+core.ask_json = real_ask_json
+assert all(p in seen[0] for p in core.PLAYBOOK), "playbook missing from the draft prompt"
+
 print("builder checks pass (%d model calls in the main run)" % report["model_calls"])

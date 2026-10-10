@@ -206,6 +206,17 @@ assert by_id.get("a") and by_id.get("b"), summary
 assert not summary[os.path.join(td, "broken.json")]["agent"], summary
 
 # --- second review's fixes ---
+# long structured answers get a longer attempt timeout than short spoken lines
+# (logged: the customers step was killed three times at a 60 s cap)
+os.environ["LLM_PROVIDER"] = "claude-cli"
+seen_t = []
+llm._ask = lambda role, prompt, system, max_tokens, timeout=0: seen_t.append((max_tokens, timeout)) or "ok"
+llm.ask("user", "hi")
+llm.ask("judge", "grade", max_tokens=4000)
+llm._ask = real_ask_
+os.environ["LLM_PROVIDER"] = "stub"
+assert seen_t[0][1] <= 60 and seen_t[1][1] >= 200, seen_t
+
 # a blocked model (logged out, usage limit) fails at once instead of retrying for minutes
 import subprocess  # noqa: E402
 waits.clear()

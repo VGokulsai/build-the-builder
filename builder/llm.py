@@ -39,8 +39,15 @@ SLEEP, NOW = time.sleep, time.monotonic                      # tests swap these 
 CALL_LOG = os.environ.get("CALL_LOG")    # a JSONL path: one line per model call, for diagnosing slow runs
 
 
-def _attempt_cap():
-    """Longest one attempt may wait. A healthy claude -p answers in 7-15 s, so 60 s means stuck."""
+LONG_REPLY = 3000          # max_tokens at or above this means a long structured answer (rules, judge, revise...)
+
+
+def _attempt_cap(long_reply):
+    """Longest one attempt may wait. Logged on 10 Oct: a short spoken line takes ~10 s, but a long
+    structured answer (inventing customers, judging, rewriting the agent) took 40 s to over 60 s,
+    so a single 60 s cap killed exactly those, again and again."""
+    if long_reply:
+        return float(os.environ.get("ATTEMPT_TIMEOUT_LONG", "240"))
     default = "60" if os.environ.get("LLM_PROVIDER") == "claude-cli" else "120"
     return float(os.environ.get("ATTEMPT_TIMEOUT", default))
 
@@ -67,14 +74,17 @@ def ask(role, prompt, system="", max_tokens=1500, tries=7):
 
 
 def _ask_with_retries(role, prompt, system, max_tokens, tries, start):
+    long_reply = max_tokens >= LONG_REPLY
+    cap = _attempt_cap(long_reply)
+    budget = max(CALL_BUDGET, 2 * cap + 60) if long_reply else CALL_BUDGET   # room for one retry of a long answer
     for attempt in range(tries):
-        left = min(CALL_BUDGET - (NOW() - start),
-                   DEADLINE["at"] - NOW() if DEADLINE["at"] is not None else CALL_BUDGET)
+        left = min(budget - (NOW() - start),
+                   DEADLINE["at"] - NOW() if DEADLINE["at"] is not None else budget)
         if left <= 1:
             raise OutOfTime("no time left for step %r" % role)
         wait = min(60, 2 * 2 ** attempt)
         try:
-            return _ask(role, prompt, system, max_tokens, timeout=max(5.0, min(_attempt_cap(), left)))
+            return _ask(role, prompt, system, max_tokens, timeout=max(5.0, min(cap, left)))
         except urllib.error.HTTPError as e:
             if e.code not in (408, 409, 429, 500, 502, 503, 504, 529) or attempt == tries - 1:
                 raise
@@ -88,7 +98,7 @@ def _ask_with_retries(role, prompt, system, max_tokens, tries, start):
             if attempt == tries - 1:
                 raise
             error = e
-        if NOW() - start + wait >= CALL_BUDGET or (DEADLINE["at"] is not None and NOW() + wait >= DEADLINE["at"]):
+        if NOW() - start + wait >= budget or (DEADLINE["at"] is not None and NOW() + wait >= DEADLINE["at"]):
             raise error         # waiting longer would break the budget: give up on this call now
         SLEEP(wait)
 

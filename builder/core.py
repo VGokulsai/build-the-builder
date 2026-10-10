@@ -508,7 +508,7 @@ def _build(task, rounds, n_train, n_val, k, log):
             log("validation failed (%s: %s); using the best train score" % (type(e).__name__, e))
     report = {"rules": rules, "best_round": best["round"], "train": best["score"], "val": best.get("val"),
               "fallbacks": {"rules": rules_fb, "customers": train_fb, "draft": draft_fb}, "stopped_early": stopped_early,
-              "pool": [{key: c.get(key) for key in ("round", "score", "per", "failures", "errors", "val")} for c in pool]}
+              "pool": [{key: c.get(key) for key in ("round", "score", "per", "failures", "errors", "val", "spec")} for c in pool]}
     return best["spec"], report
 
 

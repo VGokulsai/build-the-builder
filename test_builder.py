@@ -166,6 +166,7 @@ assert any(m.startswith("stopping after") for m in logs), logs            # the 
 assert not any("failed" in m for m in logs), [m for m in logs if "failed" in m]   # ...before a round ran out of time
 assert report4["seconds"] <= 180, report4["seconds"]
 assert spec4["system_prompt"] and llm.DEADLINE["at"] is None
+assert all(c["spec"]["system_prompt"] for c in report4["pool"])   # every version is kept, to see what a rewrite changed
 # the rewrite written in the last round is not thrown away: validation still measures it
 assert report4["pool"][-1]["score"] is None and report4["pool"][-1]["val"] is not None, report4["pool"][-1]
 

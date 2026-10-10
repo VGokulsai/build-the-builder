@@ -309,11 +309,12 @@ Say your next line only. If your goal is met or you give up, end with [DONE]."""
                 talk.append(("system", ask("tool", """You simulate the company's backend for this task.
 %s
 Customer facts: %s
+What the test expects the backend to show for this customer: %s
 Earlier tool calls and your results in this call (stay consistent with them, e.g. reuse ids):
 %s
 The agent now called: %s
 Reply with one line starting RESULT: and a realistic result (an error if the call is wrong,
-has bad arguments, or is not allowed yet).""" % (_task_text(task), json.dumps(sc["facts"]),
+has bad arguments, or is not allowed yet).""" % (_task_text(task), json.dumps(sc["facts"]), sc["success"],
                                                  _tool_history(talk) or "(none yet)", line))))
     return talk
 
@@ -328,6 +329,8 @@ Checklist:
 %s
 
 What success looks like for this caller: %s
+Grade the agent's conduct given what the tools actually returned: if a tool result differs
+from the expected outcome, the agent is right to report the tool's result.
 
 Transcript ("system" lines are tool results the caller cannot hear):
 %s
@@ -482,6 +485,10 @@ def _build(task, rounds, n_train, n_val, k, log):
     scored = [c for c in pool if c["score"] is not None]
     best = max(scored, key=lambda c: c["score"]) if scored else pool[0]
     finalists = sorted(scored, key=lambda c: -c["score"])[:3]
+    if spec is not None and scored:   # a rewrite already paid for, but no time to train-test it: validation judges it
+        pending = {"round": len(round_secs), "spec": spec, "score": None, "per": [], "failures": [], "errors": []}
+        pool.append(pending)
+        finalists = finalists[:2] + [pending]
     left = _left()
     if finalists and left is not None and round_secs:
         fit = int(left // per_finalist())
@@ -495,7 +502,7 @@ def _build(task, rounds, n_train, n_val, k, log):
                 c["val"] = evaluate(c["spec"], task, rules, val, k)[0]
             with_val = [c for c in finalists if c.get("val") is not None]
             if with_val:
-                best = max(with_val, key=lambda c: (c["val"], c["score"]))
+                best = max(with_val, key=lambda c: (c["val"], -1 if c["score"] is None else c["score"]))
             log("picked round %d: val %s, train %s" % (best["round"], _fmt(best.get("val")), _fmt(best["score"])))
         except Exception as e:
             log("validation failed (%s: %s); using the best train score" % (type(e).__name__, e))

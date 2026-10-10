@@ -28,6 +28,9 @@ MUTANTS = [
     ("run.py", '    task["id"] = str(task.get("id") or os.path.splitext(os.path.basename(a.task))[0])',
      '    task["id"] = str(task.get("id") or "task")', "id-less tasks overwrite each other"),
     ("builder/core.py", '"\\n".join("- " + p for p in PLAYBOOK)', '""', "draft written without the playbook"),
+    ("builder/core.py", "    if spec is not None and scored:", "    if False:", "last rewrite thrown away unmeasured"),
+    ("builder/core.py", "What the test expects the backend to show for this customer: %s\n",
+     "%.0s", "tool simulator blind to the expected outcome"),
 ]
 
 

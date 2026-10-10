@@ -166,6 +166,8 @@ assert any(m.startswith("stopping after") for m in logs), logs            # the 
 assert not any("failed" in m for m in logs), [m for m in logs if "failed" in m]   # ...before a round ran out of time
 assert report4["seconds"] <= 180, report4["seconds"]
 assert spec4["system_prompt"] and llm.DEADLINE["at"] is None
+# the rewrite written in the last round is not thrown away: validation still measures it
+assert report4["pool"][-1]["score"] is None and report4["pool"][-1]["val"] is not None, report4["pool"][-1]
 
 # tools in the shapes platforms use are read with their exact arguments, and every agent
 # is told those arguments plus the carry-ids-forward habit (the first real run failed on this)
@@ -289,6 +291,15 @@ assert parse_json('```json\n[{"a": 1}, {"b": 2}]\n```') == [{"a": 1}, {"b": 2}]
 assert parse_json('```json\n[\n {"id": "r1", "critical": true},\n {"id": "r2", "crit') is None
 assert parse_json('{"checks": {"r1": true}, "failures": ["did not proceed to') is None
 assert parse_json('See rule [r1]. Here: {"x": 1}') == {"x": 1}
+
+# the tool simulator knows what the test expects, so it cannot contradict the customer it serves
+tool_prompts = []
+real_ask = core.ask
+core.ask = lambda role, prompt, *a, **kw: (role == "tool" and tool_prompts.append(prompt)) or real_ask(role, prompt, *a, **kw)
+sc_x = dict(core.fallback_scenarios(task)[0], success="EXPECTED-STATE-MARKER")
+core.simulate(spec, task, sc_x)
+core.ask = real_ask
+assert tool_prompts and all("EXPECTED-STATE-MARKER" in p for p in tool_prompts), len(tool_prompts)
 
 # the first draft is written with the bank/insurer playbook in front of it
 seen = []

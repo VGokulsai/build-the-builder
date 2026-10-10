@@ -11,6 +11,10 @@
  "ref-b": {
   "workflow_id": "af994815-7284-4a51-8703-3db186fcff11",
   "agent_id": "eb44e825-be41-4dc4-974c-74a88a4d54a9",
-  "version": 3
+  "version": 4
+ },
+ "brief-c": {
+  "workflow_id": "3d58691d-8fa9-49d9-bb78-732ccddb8c13",
+  "agent_id": "8e41dfd6-4cab-4a89-b49f-3a48eb26d5fe"
  }
 }

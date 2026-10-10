@@ -115,13 +115,22 @@ amount below the floor, a second promise for the same product, the close_call ou
 call can end, every verify result. Run it. A failing assertion is a bug in your agent; fix the agent,
 not the test, unless the test misread the brief. Then run `$PYTHON out/<slot>/agent.py` (lint) until clean.
 
+Then run `$PYTHON kitlib/leftovers.py out/<slot>/agent.py <your brief files>`. It lists values and exact
+sentences of the public Briefs A/B that are still in your agent but not in your brief. Replace each one
+with your brief's rule or wording, or delete it; an example phrase of what a customer might say is fine
+to keep only if it fits your brief. Also delete the prompt and code your agent does not use: the
+reference has a one-product variant (NEGOTIATE_A, CLOSE_GUARD_A) and a several-products variant
+(NEGOTIATE_B, CLOSE_GUARD_B). Keep exactly one. If your brief's customers can have more than one product
+(final briefs can have up to three), keep the several-products variant and make it handle one product
+too.
+
 ## Step 4. Save, publish, check (about 5 minutes)
 
 `$PYTHON out/<slot>/agent.py --save` saves AND publishes (freya.save_workflow) into the same slot every
 time. Wait 20 seconds before testing a new version.
 
-- If the brief is a public practice brief (your prompt names a practice set): run
-  `$PYTHON tools/run_cases.py <agent_id> --brief <A|B> --out results/<slot>.json` once, read each FAIL
+- If your prompt gives practice customers: run the command it gives with `--out results/<slot>.json`
+  added, once, read each FAIL
   with `$PYTHON kitlib/why.py results/<slot>.json`, fix the cause in agent.py, save, run again if time
   allows. Never more than two practice runs.
 - Otherwise: one short chat with `kitlib/chat.py` using a public practice case id, only to see that the

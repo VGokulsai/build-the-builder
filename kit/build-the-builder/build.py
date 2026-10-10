@@ -44,13 +44,16 @@ async def run(briefs, api, slot, model, practice):
     options = ClaudeAgentOptions(
         cwd=KIT, model=model, skills=["collections-builder"], setting_sources=["project"],
         allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash"], permission_mode="dontAsk",
+        mcp_servers={}, extra_args={"strict-mcp-config": None},   # no connectors from the user's account
         max_turns=200, env=env)
     prompt = ("Use the collections-builder skill to build the phone agent.\n"
               "Brief files, in order (later ones build on earlier ones): %s\n"
-              "Tool API file: %s\nSlot: %s\nPractice set to test with: %s\n"
+              "Tool API file: %s\nSlot: %s\nPractice customers: %s\n"
               "Python: run every script with the interpreter in $PYTHON.\n"
               "Hard deadline: unix time %s. Finish and export before it."
-              % (" ".join(briefs), api, slot, practice or "none (the brief has no practice customers)", env["BUILD_DEADLINE"]))
+              % (" ".join(briefs), api, slot,
+                 ("run $PYTHON tools/run_cases.py <agent_id> " + practice) if practice else "none (the brief has no practice customers)",
+                 env["BUILD_DEADLINE"]))
     turn = 0
     with jl.open("w", encoding="utf-8") as out:
         out.write(json.dumps({"start": stamp(), "briefs": briefs, "api": api, "slot": slot, "model": model}) + "\n")
@@ -96,7 +99,7 @@ def main():
     ap.add_argument("--api", default="tools/openapi.json")
     ap.add_argument("--slot", help="defaults to the last brief's file name")
     ap.add_argument("--model", default=os.environ.get("BUILDER_MODEL", "claude-opus-5-5"))
-    ap.add_argument("--practice", help="practice brief letter for tools/run_cases.py (A or B), if the brief has practice customers")
+    ap.add_argument("--practice", help='arguments for tools/run_cases.py when the brief has practice customers, e.g. "--brief A" or "--cases briefs-test/cases-c.json"')
     a = ap.parse_args()
     slot = a.slot or pathlib.Path(a.briefs[-1]).stem
     asyncio.run(run(a.briefs, a.api, slot, a.model, a.practice))

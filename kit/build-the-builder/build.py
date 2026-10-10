@@ -102,7 +102,29 @@ def main():
     ap.add_argument("--practice", help='arguments for tools/run_cases.py when the brief has practice customers, e.g. "--brief A" or "--cases briefs-test/cases-c.json"')
     a = ap.parse_args()
     slot = a.slot or pathlib.Path(a.briefs[-1]).stem
-    asyncio.run(run(a.briefs, a.api, slot, a.model, a.practice))
+    try:
+        # hard stop: a stalled model API must not hold the run past the limit (seen 10 Oct: retries for 25 min)
+        asyncio.run(asyncio.wait_for(run(a.briefs, a.api, slot, a.model, a.practice), LIMIT_S - 60))
+    except asyncio.TimeoutError:
+        print("STOPPED: the 30-minute limit was reached", flush=True)
+    finally:
+        export(slot)
+
+
+def export(slot):
+    """Whatever happened to the model, the saved agent is exported: that file is what gets scored."""
+    sys.path.insert(0, str(KIT))
+    try:
+        import freya
+        saved = json.load(open(KIT / ".freya-agents.json")).get(slot)
+        if saved:
+            path = KIT / "out" / (slot + ".workflow.json")
+            freya.export_workflow(saved["workflow_id"], str(path))
+            print("exported %s -> %s" % (saved["workflow_id"], path), flush=True)
+        else:
+            print("nothing saved for slot %s: no agent to export" % slot, flush=True)
+    except Exception as e:
+        print("export failed: %s" % e, flush=True)
 
 
 if __name__ == "__main__":

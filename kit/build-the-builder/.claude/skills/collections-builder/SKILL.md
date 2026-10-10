@@ -174,6 +174,7 @@ Finish with one line: slot, workflow_id, agent_id, lint result, local tests resu
 ## Rules
 
 - Never edit the agent on the platform by hand. Change agent.py and save.
+- Do not use git or touch files outside out/<slot>/ and results/. The organisers rerun this builder.
 - Never write a value into agent.py that is not in the brief or the tool API file you were given.
 - Never tell the customer something is recorded unless the tool returned ok.
 - Prefer code (hooks, code nodes, routes on tool results) over prompt rules for anything a rule can

@@ -33,7 +33,7 @@ class Blocked(RuntimeError):
     Not retried, so the build falls back in seconds instead of waiting out every call."""
 
 
-CALL_BUDGET = float(os.environ.get("CALL_BUDGET", "180"))   # seconds one call may take, retries included
+CALL_BUDGET = float(os.environ.get("CALL_BUDGET", "240"))   # seconds one call may take, retries included
 DEADLINE = {"at": None}     # monotonic time when the whole build must stop calling the model
 SLEEP, NOW = time.sleep, time.monotonic                      # tests swap these out
 
@@ -50,7 +50,7 @@ def _attempt_cap(long_reply):
     so a single 60 s cap killed exactly those, again and again."""
     if long_reply:
         return float(os.environ.get("ATTEMPT_TIMEOUT_LONG", "240"))
-    default = "60" if os.environ.get("LLM_PROVIDER") == "claude-cli" else "120"
+    default = "90" if os.environ.get("LLM_PROVIDER") == "claude-cli" else "120"   # day4: agent lines with a long prompt passed 60 s under load
     return float(os.environ.get("ATTEMPT_TIMEOUT", default))
 
 

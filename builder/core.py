@@ -274,7 +274,7 @@ def _tool_history(talk):
     return "\n".join(lines)
 
 
-def simulate(spec, task, sc, max_turns=8):
+def simulate(spec, task, sc, max_turns=12):   # 8 cut a card freeze off before the freeze (day4)
     """Play one call. Returns the full transcript (with tool calls and results) as (speaker, text) pairs.
     The simulated caller only ever hears what the agent says, never tool calls or results."""
     talk = [("agent", spec["first_message"])]

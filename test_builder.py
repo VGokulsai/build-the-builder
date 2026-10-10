@@ -217,7 +217,7 @@ llm.ask("user", "hi")
 llm.ask("judge", "grade", max_tokens=4000)
 llm._ask = real_ask_
 os.environ["LLM_PROVIDER"] = "stub"
-assert seen_t[0][1] <= 60 and seen_t[1][1] >= 200, seen_t
+assert seen_t[0][1] <= 90 and seen_t[1][1] >= 200, seen_t
 
 # a blocked model (logged out, usage limit) fails at once instead of retrying for minutes
 import subprocess  # noqa: E402

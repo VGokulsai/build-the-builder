@@ -190,6 +190,21 @@ core.ask = real_ask_core
 assert mean_r is None and per_r == [None] and len(errs_r) == 2 and "refused" in errs_r[0], (mean_r, per_r, errs_r)
 assert not core._refused("I'm not comfortable giving my date of birth over the phone.")
 
+# run_all: every task gets its own agent, id-less tasks never overwrite each other,
+# and a broken task file is reported as missing instead of stopping the rest
+import run_all  # noqa: E402
+td = tempfile.mkdtemp()
+for name, body in (("a.json", {"instructions": "Help callers activate a card.", "tools": []}),
+                   ("b.json", {"instructions": "Help callers reset a PIN.", "tools": []})):
+    with open(os.path.join(td, name), "w", encoding="utf-8") as fh:
+        json.dump(body, fh)
+with open(os.path.join(td, "broken.json"), "w", encoding="utf-8") as fh:
+    fh.write("{not json")
+summary = run_all.main([td, "--minutes", "1", "--rounds", "1", "--train", "1", "--val", "1", "--k", "1", "--out", os.path.join(td, "out")])
+by_id = {v.get("task_id"): v["agent"] for v in summary.values()}
+assert by_id.get("a") and by_id.get("b"), summary
+assert not summary[os.path.join(td, "broken.json")]["agent"], summary
+
 # --- second review's fixes ---
 # a blocked model (logged out, usage limit) fails at once instead of retrying for minutes
 import subprocess  # noqa: E402

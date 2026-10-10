@@ -25,6 +25,8 @@ MUTANTS = [
     ("builder/core.py", "        if _refused(user):", "        if False:", "a refusing caller is scored"),
     ("builder/core.py", "    score = BREACH_CAP * share if critical_broken else share",
      "    score = 0.0 if critical_broken else share", "breaches give no learning signal"),
+    ("run.py", '    task["id"] = str(task.get("id") or os.path.splitext(os.path.basename(a.task))[0])',
+     '    task["id"] = str(task.get("id") or "task")', "id-less tasks overwrite each other"),
 ]
 
 

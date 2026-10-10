@@ -26,12 +26,15 @@ def main(argv=None):
     p.add_argument("--out", default="out")
     a = p.parse_args(argv)
 
-    task = json.load(open(a.task, encoding="utf-8"))
+    with open(a.task, encoding="utf-8") as f:
+        task = json.load(f)
+    # a task without an id is named after its file, so two such tasks never overwrite each other
+    task["id"] = str(task.get("id") or os.path.splitext(os.path.basename(a.task))[0])
     spec, report = core.build(task, rounds=a.rounds, n_train=a.train, n_val=a.val, k=a.k, minutes=a.minutes)
     report["model_calls"] = CALLS["n"]
     report["provider"] = os.environ.get("LLM_PROVIDER", "stub")
 
-    out = os.path.join(a.out, task.get("id", "task"))
+    out = os.path.join(a.out, task["id"])
     os.makedirs(out, exist_ok=True)
     for name, data in (("agent.json", platform.export(spec, task)), ("report.json", report)):
         with open(os.path.join(out, name), "w", encoding="utf-8") as f:

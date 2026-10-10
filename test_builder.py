@@ -292,6 +292,20 @@ assert parse_json('```json\n[\n {"id": "r1", "critical": true},\n {"id": "r2", "
 assert parse_json('{"checks": {"r1": true}, "failures": ["did not proceed to') is None
 assert parse_json('See rule [r1]. Here: {"x": 1}') == {"x": 1}
 
+# one step can run on its own model: a strong judge, a fast caller
+os.environ["LLM_MODEL"], os.environ["LLM_MODEL_JUDGE"] = "fast", "strong"
+assert llm.model_for("judge") == "strong" and llm.model_for("user") == "fast"
+del os.environ["LLM_MODEL"], os.environ["LLM_MODEL_JUDGE"]
+assert llm.model_for("user", "dflt") == "dflt"
+cmds, real_b, real_p = [], llm.run_bounded, os.environ.get("LLM_PROVIDER")
+llm.run_bounded = lambda cmd, *a: cmds.append(cmd) or (json.dumps({"result": "ok"}), "")
+os.environ["LLM_PROVIDER"], os.environ["LLM_MODEL_JUDGE"] = "claude-cli", "strong"
+llm._ask("judge", "q", "", 100)
+llm.run_bounded = real_b
+del os.environ["LLM_MODEL_JUDGE"]
+os.environ["LLM_PROVIDER"] = real_p or "stub"
+assert cmds[0][cmds[0].index("--model") + 1] == "strong", cmds
+
 # the tool simulator knows what the test expects, so it cannot contradict the customer it serves
 tool_prompts = []
 real_ask = core.ask

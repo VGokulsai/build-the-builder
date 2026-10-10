@@ -31,6 +31,7 @@ MUTANTS = [
     ("builder/core.py", "    if spec is not None and scored:", "    if False:", "last rewrite thrown away unmeasured"),
     ("builder/core.py", "What the test expects the backend to show for this customer: %s\n",
      "%.0s", "tool simulator blind to the expected outcome"),
+    ("builder/llm.py", 'model_for(role, "claude-haiku-4-5-20251001"))', '"claude-haiku-4-5-20251001")', "per-step model ignored"),
 ]
 
 

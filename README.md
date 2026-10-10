@@ -29,6 +29,7 @@ LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=... python run.py tasks/bank_card_freez
 Output goes to `out/<task id>/agent.json` (the agent) and `out/<task id>/report.json` (the extracted rules, every candidate's scores and failures, validation scores, model calls used). `WORKERS` sets how many calls run in parallel (default 4).
 
 Model backends (`LLM_PROVIDER`): `anthropic`, `openai` (any OpenAI-compatible endpoint: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`), or `stub` (canned answers, no network).
+Set `LLM_MODEL_<STEP>` (e.g. `LLM_MODEL_JUDGE`, `LLM_MODEL_REVISE`, `LLM_MODEL_DRAFT`) to run one step on a different model: a strong model writes and judges, a fast one plays the caller (`user`) and the backend (`tool`).
 
 ## Test
 

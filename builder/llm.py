@@ -4,6 +4,8 @@ Pick a backend with LLM_PROVIDER:
   anthropic  Claude, key in ANTHROPIC_API_KEY, model in LLM_MODEL
   openai     any OpenAI-compatible endpoint: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
   stub       canned answers, no network; for testing the loop itself
+LLM_MODEL_<STEP> (e.g. LLM_MODEL_JUDGE, LLM_MODEL_REVISE) overrides LLM_MODEL for one step, so a
+strong model can write and judge while a fast one plays the caller and the backend.
 Standard library only, so a reproducible run needs no installs.
 """
 import json
@@ -103,6 +105,11 @@ def _ask_with_retries(role, prompt, system, max_tokens, tries, start):
         SLEEP(wait)
 
 
+def model_for(role, default=None):
+    """The model for one step: LLM_MODEL_<ROLE> if set, else LLM_MODEL, else the backend's default."""
+    return os.environ.get("LLM_MODEL_" + role.upper()) or os.environ.get("LLM_MODEL") or default
+
+
 def _ask(role, prompt, system, max_tokens, timeout=120.0):
     with _lock:
         CALLS["n"] += 1
@@ -111,7 +118,7 @@ def _ask(role, prompt, system, max_tokens, timeout=120.0):
         from builder.stub import answer
         return answer(role, prompt, system)
     if provider == "anthropic":
-        body = {"model": os.environ.get("LLM_MODEL", "claude-sonnet-5-5"), "max_tokens": max_tokens,
+        body = {"model": model_for(role, "claude-sonnet-5-5"), "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}]}
         if system:
             body["system"] = system
@@ -123,7 +130,7 @@ def _ask(role, prompt, system, max_tokens, timeout=120.0):
         return text
     if provider == "openai":
         msgs = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
-        body = {"model": os.environ["LLM_MODEL"], "max_tokens": max_tokens, "messages": msgs}
+        body = {"model": model_for(role) or os.environ["LLM_MODEL"], "max_tokens": max_tokens, "messages": msgs}
         data = _post(os.environ["LLM_BASE_URL"].rstrip("/") + "/chat/completions", body,
                      {"Authorization": "Bearer " + os.environ["LLM_API_KEY"]}, timeout)
         choice = data["choices"][0]
@@ -134,11 +141,11 @@ def _ask(role, prompt, system, max_tokens, timeout=120.0):
             raise Truncated(text)
         return text
     if provider == "claude-cli":
-        return _claude_cli(prompt, system, timeout)
+        return _claude_cli(prompt, system, timeout, model_for(role, "claude-haiku-4-5-20251001"))
     raise SystemExit("Unknown LLM_PROVIDER: %r" % provider)
 
 
-def _claude_cli(prompt, system, timeout):
+def _claude_cli(prompt, system, timeout, model="claude-haiku-4-5-20251001"):
     """The local `claude` login, headless. The flags strip CLAUDE.md, skills, plugins, tools and
     MCP servers out of each call (measured 14x cheaper on this machine, see cloud-pet/ask.py).
     The prompt goes on stdin: Windows caps a command line at 32 KB."""
@@ -146,7 +153,7 @@ def _claude_cli(prompt, system, timeout):
     if len(system) > 4000:              # a long agent prompt would break the 32 KB command line: send it on stdin
         prompt = "SYSTEM INSTRUCTIONS (follow them exactly):\n%s\n\n---\n\n%s" % (system, prompt)
         system = short
-    cmd = ["claude", "-p", "--model", os.environ.get("LLM_MODEL", "claude-haiku-4-5-20251001"),
+    cmd = ["claude", "-p", "--model", model,
            "--output-format", "json", "--setting-sources", "", "--tools", "", "--strict-mcp-config",
            "--system-prompt", system or short]
     stdout, stderr = run_bounded(cmd, prompt, timeout)

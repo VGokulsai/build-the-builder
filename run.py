@@ -9,6 +9,7 @@ failures, the validation scores, and how many model calls it took).
 import argparse
 import json
 import os
+import sys
 
 from builder import core, platform
 from builder import llm
@@ -27,6 +28,7 @@ def main(argv=None):
     p.add_argument("--out", default="out")
     p.add_argument("--log", default=None, help="write one JSON line per model call here (timing, outcome)")
     a = p.parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)   # progress shows up live even when redirected to a file
     if a.log:
         llm.CALL_LOG = a.log
 

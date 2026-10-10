@@ -36,13 +36,37 @@ DEADLINE = {"at": None}     # monotonic time when the whole build must stop call
 SLEEP, NOW = time.sleep, time.monotonic                      # tests swap these out
 
 
+CALL_LOG = os.environ.get("CALL_LOG")    # a JSONL path: one line per model call, for diagnosing slow runs
+
+
+def _attempt_cap():
+    """Longest one attempt may wait. A healthy claude -p answers in 7-15 s, so 60 s means stuck."""
+    default = "60" if os.environ.get("LLM_PROVIDER") == "claude-cli" else "120"
+    return float(os.environ.get("ATTEMPT_TIMEOUT", default))
+
+
 def ask(role, prompt, system="", max_tokens=1500, tries=7):
     """Send one prompt; return the model's text. Retries rate limits, server errors
     and timeouts with backoff, because nobody can touch the builder during judging.
     A 429 waits as long as the server's Retry-After asks, else backs off up to a minute.
     No call outlives CALL_BUDGET or the build's DEADLINE, so a hung provider cannot
-    freeze the builder past the hackathon deadline."""
-    start = NOW()
+    freeze the builder past the hackathon deadline. With CALL_LOG set, every call is logged."""
+    start, outcome = NOW(), "error"
+    try:
+        text = _ask_with_retries(role, prompt, system, max_tokens, tries, start)
+        outcome = "ok"
+        return text
+    except Exception as e:
+        outcome = type(e).__name__
+        raise
+    finally:
+        if CALL_LOG:
+            with _lock, open(CALL_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"t": round(time.time(), 1), "role": role, "secs": round(NOW() - start, 1),
+                                    "outcome": outcome, "prompt_chars": len(prompt) + len(system)}) + "\n")
+
+
+def _ask_with_retries(role, prompt, system, max_tokens, tries, start):
     for attempt in range(tries):
         left = min(CALL_BUDGET - (NOW() - start),
                    DEADLINE["at"] - NOW() if DEADLINE["at"] is not None else CALL_BUDGET)
@@ -50,7 +74,7 @@ def ask(role, prompt, system="", max_tokens=1500, tries=7):
             raise OutOfTime("no time left for step %r" % role)
         wait = min(60, 2 * 2 ** attempt)
         try:
-            return _ask(role, prompt, system, max_tokens, timeout=max(5.0, min(120.0, left)))
+            return _ask(role, prompt, system, max_tokens, timeout=max(5.0, min(_attempt_cap(), left)))
         except urllib.error.HTTPError as e:
             if e.code not in (408, 409, 429, 500, 502, 503, 504, 529) or attempt == tries - 1:
                 raise

@@ -11,6 +11,7 @@ import json
 import os
 
 from builder import core, platform
+from builder import llm
 from builder.llm import CALLS
 
 
@@ -24,7 +25,10 @@ def main(argv=None):
     p.add_argument("--minutes", type=float, default=None,
                    help="time budget for this task; stops early and delivers the best agent so far")
     p.add_argument("--out", default="out")
+    p.add_argument("--log", default=None, help="write one JSON line per model call here (timing, outcome)")
     a = p.parse_args(argv)
+    if a.log:
+        llm.CALL_LOG = a.log
 
     with open(a.task, encoding="utf-8") as f:
         task = json.load(f)

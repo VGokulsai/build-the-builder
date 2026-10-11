@@ -33,7 +33,7 @@ def create_workflow(name, workflow):
     w = api("POST", "/api/v2/workflow", {"name": name, "workflow": workflow})["workflow"]
     return {"workflow_id": w["id"], "agent_id": w["agentId"]}
 
-def save_workflow(slot, workflow, state_file=".freya-agents.json"):
+def save_workflow(slot, workflow, state_file=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".freya-agents.json")):  # ours: same file from any folder
     """Create the workflow the first time, update the same one afterwards. Use this in your builder.
 
     `slot` is your own label, for example the brief's file name. A workspace holds a limited number of workflows,

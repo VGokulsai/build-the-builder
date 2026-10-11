@@ -24,5 +24,9 @@
  "brief-d": {
   "workflow_id": "aabf77c2-aa64-4828-9ec5-c1a7fe611f56",
   "agent_id": "f4d41e7f-2c52-4315-b5dc-6a6a46bedace"
+ },
+ "rehearsal-d": {
+  "workflow_id": "8da020ba-6630-484b-a2d4-04d3436db8ca",
+  "agent_id": "99333fdc-baf2-4630-a74d-98cbe758166e"
  }
 }

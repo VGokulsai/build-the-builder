@@ -49,10 +49,12 @@ async def run(briefs, api, slot, model, practice):
     prompt = ("Use the collections-builder skill to build the phone agent.\n"
               "Brief files, in order (later ones build on earlier ones): %s\n"
               "Tool API file: %s\nSlot: %s\nPractice customers: %s\n"
+              "Tools' base URL (our mock of the bank's services; every tool must call it): %s\n"
               "Python: run every script with the interpreter in $PYTHON.\n"
               "Hard deadline: unix time %s. Finish and export before it."
               % (" ".join(briefs), api, slot,
                  ("run $PYTHON tools/run_cases.py <agent_id> " + practice) if practice else "none (the brief has no practice customers)",
+                 os.environ.get("BUILD_MOCK_URL") or "the servers URL in the tool API file",
                  env["BUILD_DEADLINE"]))
     turn = 0
     with jl.open("w", encoding="utf-8") as out:

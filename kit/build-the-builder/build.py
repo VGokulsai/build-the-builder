@@ -39,7 +39,7 @@ async def run(briefs, api, slot, model, practice):
     summary = ["builder trace for slot %s" % slot, "start: " + stamp(), "briefs: " + ", ".join(briefs),
                "tool API: " + api, "builder model: " + model, ""]
     env = {"BASH_DEFAULT_TIMEOUT_MS": "900000", "BASH_MAX_TIMEOUT_MS": "1200000",
-           "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", "PYTHON": sys.executable,
+           "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", "PYTHON": sys.executable, "PYTHONIOENCODING": "utf-8",
            "BUILD_SLOT": slot, "BUILD_API": api, "BUILD_DEADLINE": str(int(started + LIMIT_S - 120))}
     options = ClaudeAgentOptions(
         cwd=KIT, model=model, skills=["collections-builder"], setting_sources=["project"],
@@ -94,6 +94,12 @@ async def run(briefs, api, slot, model, practice):
 
 
 def main():
+    # 11 Oct rehearsal: an arrow in Claude's text crashed print() on Windows (cp1252 console/file), killing the run
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("briefs", nargs="+")
     ap.add_argument("--api", default="tools/openapi.json")

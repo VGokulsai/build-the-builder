@@ -12,11 +12,23 @@ HEADERS = {"Authorization": "Bearer " + os.environ.get("FREYA_API_KEY", ""), "Co
 def api(method, path, body=None, **params):
     """Call the API and return the `result` part of its {success, data: {message, result}} envelope."""
     q = "?" + urllib.parse.urlencode(params) if params else ""
-    req = urllib.request.Request(URL + path + q, data=json.dumps(body).encode() if body is not None else None, headers=HEADERS, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r: out = json.load(r)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:1500]}") from None
+    data = json.dumps(body).encode() if body is not None else None
+    # ours: 11 Oct the platform answered 504 for minutes before the final; a save that fails there leaves no
+    # agent, so gateway errors and dropped connections are retried. A chat turn is not (it would repeat a turn).
+    tries = 1 if path.startswith("/api/v2/chat/") else 5
+    for attempt in range(tries):
+        req = urllib.request.Request(URL + path + q, data=data, headers=HEADERS, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r: out = json.load(r)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503, 504) and attempt < tries - 1:
+                time.sleep(5 * 2 ** attempt); continue
+            raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:1500]}") from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt < tries - 1:
+                time.sleep(5 * 2 ** attempt); continue
+            raise
     return out.get("data", {}).get("result", out) if isinstance(out, dict) else out
 
 _ws = None

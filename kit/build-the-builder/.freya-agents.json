@@ -28,5 +28,9 @@
  "rehearsal-d": {
   "workflow_id": "8da020ba-6630-484b-a2d4-04d3436db8ca",
   "agent_id": "99333fdc-baf2-4630-a74d-98cbe758166e"
+ },
+ "rehearsal-raw": {
+  "workflow_id": "fbeb9fbc-0832-448b-b70c-0117efea6653",
+  "agent_id": "38e14468-7b3f-45db-90d8-8c6a67a5c91c"
  }
 }

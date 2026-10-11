@@ -142,6 +142,33 @@ time. Wait 20 seconds before testing a new version.
 
 Finish with one line: slot, workflow_id, agent_id, lint result, local tests result, practice result if any.
 
+## What the final briefs will change (the organisers said so): handle each from the brief
+
+- Other identity questions (the kit's customer simulator already knows postcode, birth year, company
+  number, founded year, date of birth, phone digits). Take the questions, their order and each answer's
+  format from the brief and from the verify tool's `field` enum in the tool API file. Write the identity
+  prompt, the verify post-hook's "next question" text and the answer `field_help` from them. Say in the
+  prompt how to normalise each answer before calling the tool (digits only, upper case, YYYY, YYYY-MM-DD).
+- Customers who give an answer in two parts ("forty four" ... "zero one"): measured on 11 Oct, the agent
+  kept asking for "all four digits", the customer repeated the first half, and the agent sent "0010":
+  identity failed on 3 of 3 customers. The identity prompt must say: when only part of an answer comes,
+  say only "Thank you, and the rest?", then JOIN the parts in order ("forty four" + "zero one" = 4401;
+  "the eighth of January" + "nineteen ninety one" = 1991-01-08), never ask for the whole answer again,
+  never send a part alone. Copy that wording from the reference's IDENTITY prompt and adapt the examples
+  to your brief's questions. The same holds for amounts and dates later in the call.
+- Business customers: if the brief calls a company and asks for a contact person, write the opening,
+  the confirmation question and the "someone else" rules from the brief, not from the reference.
+- Other limits, deadlines, bands, calendars: all in the setup code, the account post-hook and the
+  guards, never only in prompts.
+- Another outcome table: the close_call guard, the per-node close_call enums and every prompt that names
+  an outcome must use exactly the new table's codes. Check each (outcome, reason) pair the guard can
+  produce is in the table.
+- Tool fields and allowed values can change: build every tool with `wf.api_tool` from the given tool API
+  file and let `lint` compare. Never type a field name or enum value from memory.
+- Several products (up to three): use the several-products design.
+- Tie-break is the total promised amount on passed customers: always ask for the full amount first and
+  never propose less than the brief requires before the customer asks.
+
 ## Lessons from the practice runs (each one failed a customer once)
 
 - The judge counts literally. "Offered once" means the amount is named once in the whole call. When the

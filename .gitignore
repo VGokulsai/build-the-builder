@@ -8,3 +8,4 @@ kit/build-the-builder/results/
 kit/build-the-builder/traces/
 kit/*.zip
 kit/build-the-builder/final/
+mock/.wrangler/

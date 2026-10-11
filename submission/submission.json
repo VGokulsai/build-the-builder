@@ -4,7 +4,7 @@
     {"name": "Gokul Sai", "email": "gokulsai367@gmail.com"}
   ],
   "repo": "https://github.com/VGokulsai/build-the-builder",
-  "commit": "PENDING",
+  "commit": "538e112",
   "run_command": "cd kit/build-the-builder && source env.sh && BUILD_MOCK_URL={mock_url} python3 build.py {case_folder}/BRIEF.md {case_folder}/README.md {case_folder}/example-scenarios.md {case_folder}/sources/... --api {case_folder}/sources/documents/2026-10-01-service-contract.md --slot final",
   "workflow": "submission/final.workflow.json",
   "trace": "submission/final-trace.jsonl",

@@ -1,0 +1,121 @@
+  [Skill] 
+  [Bash] date +%s; echo $PYTHON; ls; ls out 2>/dev/null; ls "final/Build the Builder - Final Case" -R | head -50; wc -c "final/Bu
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\BRIEF.md
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\sources\emails\2026-10-09-de
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\sources\documents\2026-10-01
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\README.md
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\sources\emails\attachments\2
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\sources\meetings\2026-10-10-
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\final\Build the Builder - Final Case\example-scenarios.md
+  [Bash] date +%s; ls out/rehearsal-raw out/brief-d; wc -l out/*/agent.py agents/ref_ab.py kitlib/wf.py; grep -n "^def \|^class \
+I've read the brief (Turkish statement-debt flow, 7 enveloped services). Now reading the kit API and a previous agent to adapt.
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\kitlib\wf.py
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\rehearsal-raw\agent.py
+  [Bash] date +%s; cd "final/Build the Builder - Final Case/test-environment"; head -c 7700 test-customers.md; curl -s -m 10 -X P
+Mock serves `/voice/v1/<service>`. Writing the tool API file and the agent now.
+  [Write] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\openapi.json
+  [Write] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Bash] cd /c/Users/sridh/build-the-builder/kit/build-the-builder && date +%s && sed -i "s/{{cards_list_response.data.cards}}/{{
+  [Write] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\test_hooks.py
+  [Bash] "$PYTHON" out/final/agent.py && PYTHONIOENCODING=utf-8 "$PYTHON" out/final/test_hooks.py 2>&1 | tail -40
+  [Bash] sed -i 's/headers={"Content-Type": "application\/json"}/headers={"Content-Type": "application\/json", "User-Agent": "cur
+All local tests pass and match the example readings. Saving and publishing.
+  [Bash] date +%s && "$PYTHON" out/final/agent.py --save 2>&1 | tail -3; sed -n 1,30p kitlib/chat.py | grep -n "argv\|vars\|custo
+  [Bash] sed -n 1,60p kitlib/chat.py
+  [Write] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\smoke.py
+  [Bash] sleep 15 && PYTHONIOENCODING=utf-8 timeout 300 "$PYTHON" out/final/smoke.py 56181cc0-a22b-43c7-baf9-78998153d9dd 9615868
+The model printed the tool call as text instead of calling it. Moving the card list (and single-card balance) into deterministic action nodes.
+  [Bash] grep -n "vars\['setup_state'\] = 'ok'\|^    nxt = \|^if len(eligible)\|^elif len(eligible)\|^else:\|^reading = ' '.join(
+Now the edits:
+  [Edit] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Edit] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Edit] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Edit] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Edit] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\agent.py
+  [Bash] sed -i 's/        "main", MAIN, tools=tools,/        "main", MAIN, tools=tools[1:],/' out/final/agent.py && sed -i 's/TO
+  [Bash] sleep 20 && PYTHONIOENCODING=utf-8 timeout 300 "$PYTHON" out/final/smoke.py 56181cc0-a22b-43c7-baf9-78998153d9dd 9615868
+  [Bash] curl -s -m 10 -X POST https://freya-statement-mock.playbid.workers.dev/voice/v1/cards.list -H 'Content-Type: application
+  [Bash] grep -n -i "pre_actions\|api_request" docs/tools-and-code.md docs/workflow-format.md | head -20
+  [Read] C:\Users\sridh\build-the-builder\kit\build-the-builder\docs\tools-and-code.md
+Card list came back empty in the live chat: the envelope pre-hook apparently doesn't run on engine actions. Baking the envelope directly into those calls and retesting.
+  [Bash] "$PYTHON" - <<'EOF'
+import json
+p='out/final/openapi.json'
+d=json.load(open(p,encoding='utf-8'))
+for path in ('/cards.li
+  [Bash] "$PYTHON" - <<'EOF'
+p='out/final/agent.py'
+s=open(p,encoding='utf-8').read()
+s=s.replace("""b = dict(config.get('body') 
+Saved v3. The local assertion failure comes from the test harness not filling in nested templates. I'll fix that after the live check.
+  [Bash] sleep 18 && PYTHONIOENCODING=utf-8 timeout 300 "$PYTHON" out/final/smoke.py 56181cc0-a22b-43c7-baf9-78998153d9dd 9615868
+  [Bash] grep -n "^def " freya.py | head -30
+  [Bash] sed -n 91,98p freya.py && PYTHONIOENCODING=utf-8 "$PYTHON" -c "
+import freya,json,sys
+v={'customerNumber':'96158684','no
+Found it: the platform nests the HTTP body one level deeper, so the hooks saw no cards. Adding an unwrap step to every post-hook.
+  [Bash] "$PYTHON" - <<'EOF'
+import re
+p='out/final/agent.py'
+s=open(p,encoding='utf-8').read()
+s=s.replace('def build():\n', 'UN
+  [Bash] sleep 18 && PYTHONIOENCODING=utf-8 timeout 400 "$PYTHON" out/final/smoke.py 56181cc0-a22b-43c7-baf9-78998153d9dd 9615868
+  [Bash] "$PYTHON" - <<'EOF'
+p='out/final/agent.py'
+s=open(p,encoding='utf-8').read()
+def rep(a,b):
+    global s
+    assert a in 
+Saved v5. Exporting now so a valid export exists, then one more live check.
+  [Bash] "$PYTHON" -c "import freya,json; s=json.load(open('.freya-agents.json'))['final']; print(freya.export_workflow(s['workfl
+Matches example 3. One more live check on the e-mail path (example 4).
+  [Bash] PYTHONIOENCODING=utf-8 timeout 400 "$PYTHON" out/final/smoke.py 56181cc0-a22b-43c7-baf9-78998153d9dd 92460108 "Geçen ayı
+The send went out without reading the address first (example 4 requires it). Adding a fixed confirmation question built from the registered address.
+  [Bash] "$PYTHON" - <<'EOF'
+p='out/final/agent.py'
+s=open(p,encoding='utf-8').read()
+def rep(a,b):
+    global s
+    assert a in 
+Saved v6 and exported. Now fixing the local test harness for nested templates and re-running it, plus a live check.
+  [Bash] "$PYTHON" - <<'EOF'
+p='out/final/test_hooks.py'
+s=open(p,encoding='utf-8').read()
+s=s.replace("""        if isinstance(v
+Local tests pass and the live e-mail path is correct. Writing the spec file and running the leftovers check.
+  [Write] C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final\spec.md
+  [Bash] F="final/Build the Builder - Final Case"; timeout 60 "$PYTHON" kitlib/leftovers.py out/final/agent.py "$F/BRIEF.md" "$F/
+I built, tested, saved and exported the phone agent about 15 minutes before the deadline.
+
+**final** · workflow `56181cc0-a22b-43c7-baf9-78998153d9dd` · agent `6a629568-d1ec-4d57-b9ea-ccd3b05b8bdf` · lint clean · local tests pass · no practice customers · exported to `out/final.workflow.json` (version 6)
+
+The service contract was a written document, so I first turned it into `out/final/openapi.json`, with every tool pointing at your mock under `/voice/v1/`. The code works out every sentence the agent reads: amounts spelled out in Turkish words, full currency names, card ends read digit by digit, and the rules for paid, part-paid and no-debt statements. The model only reads those sentences out; it doesn't build them.
+
+I tried four example scenarios as live chats on the saved agent:
+- **Example 3 (three cards, "tell me all of them"):** asked again for one card, read the right one, then asked "another card?" before the offer. As expected.
+- **Example 2 / 5 (statement week change):** offered only the other weeks, read the new dates, asked again after "Olur herhalde", and changed it only after a clear "Evet". As expected.
+- **Example 4 (last month's statement):** read the debt correctly and said only the latest statement can be sent.
+- **Messy e-mail address (customer 93261864):** shortened to "m ile başlayan ornekposta adresinize", asked first, sent after yes.
+
+Three problems turned up in the live chats and are fixed in version 6:
+- The platform passes the bank's reply one level deeper than expected, so at first every customer heard "no eligible card".
+- The model sometimes wrote a tool call as text instead of running it. The card list, the e-mail lookup and the single-card balance now run automatically before the conversation starts.
+- In the example 4 chat, the statement was e-mailed without the address being read out first. The agent must now ask a fixed question that includes the address. I re-checked this on the messy-address customer, not on example 4 itself, so that run is still unconfirmed.
+
+Gaps you should know about:
+- **Brief files:** I read only parts of five of them: the kickoff mail, the 2 Sept analysis, the 7 Oct transcript, the FAQ and the phone-menu prompt sheet. I built from the 8 Oct analysis, the 9 Oct decisions mail and the 10 Oct session, which override the older ones. The leftovers check found nothing left over from the practice briefs.
+- **"No card" customer (93821776):** I didn't test how they're handled live. My guess is that they hear the agent-transfer sentence rather than the brief's "no eligible card" sentence, because that card-list error may skip my code.
+- **Rules left to the prompt:** silence, the three-tries limit, the three calming replies and the yearly limit on changing the statement week are only instructions, with no code enforcing them. The bank gives no field showing whether the yearly change is used up, so the change is always offered.
+- **Wording I wrote myself:** the sentences for after the due date, the remaining automatic payment and foreign-currency debt moved into lira are mine, because the bank never drafted them. The automatic-payment and moved-debt lines were never triggered in any test.
+
+Files are in `out/final/`:
+- `agent.py`
+- `spec.md`
+- `openapi.json`
+- `test_hooks.py`
+- `smoke.py`
+
+trace: C:\Users\sridh\build-the-builder\kit\build-the-builder\traces\final-20261012-004111.txt
+       C:\Users\sridh\build-the-builder\kit\build-the-builder\traces\final-20261012-004111.jsonl
+build time 814 s
+exported 56181cc0-a22b-43c7-baf9-78998153d9dd -> C:\Users\sridh\build-the-builder\kit\build-the-builder\out\final.workflow.json

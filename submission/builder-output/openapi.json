@@ -1,0 +1,255 @@
+{
+ "openapi": "3.0.0",
+ "info": {
+  "title": "Freya Bank voice statement services (from 2026-10-01-service-contract.md)",
+  "version": "1"
+ },
+ "servers": [
+  {
+   "url": "https://freya-statement-mock.playbid.workers.dev/voice/v1"
+  }
+ ],
+ "paths": {
+  "/cards.list": {
+   "post": {
+    "operationId": "cards_list",
+    "summary": "5.1 the customer's cards",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "customerNo"
+        ],
+        "properties": {
+         "customerNo": {
+          "type": "string"
+         },
+         "aiFlow": {
+          "type": "string"
+         },
+         "data": {
+          "type": "object"
+         },
+         "call": {
+          "type": "object"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/cards.balance": {
+   "post": {
+    "operationId": "cards_balance",
+    "summary": "5.2 statement and debt of one card",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "cardNumber"
+        ],
+        "properties": {
+         "cardNumber": {
+          "type": "string"
+         },
+         "data": {
+          "type": "object"
+         },
+         "call": {
+          "type": "object"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/statement.week.get": {
+   "post": {
+    "operationId": "statement_week_get",
+    "summary": "5.3 current statement week",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "cardNumber"
+        ],
+        "properties": {
+         "cardNumber": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/statement.week.decide": {
+   "post": {
+    "operationId": "statement_week_decide",
+    "summary": "5.4 preview of a new week",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "cardNumber",
+         "newStatementWeek",
+         "statementDay"
+        ],
+        "properties": {
+         "cardNumber": {
+          "type": "string"
+         },
+         "newStatementWeek": {
+          "type": "string",
+          "enum": [
+           "1",
+           "2",
+           "3",
+           "4"
+          ]
+         },
+         "statementDay": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/statement.week.change": {
+   "post": {
+    "operationId": "statement_week_change",
+    "summary": "5.5 change the statement week",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "cardNumber",
+         "newStatementWeek",
+         "statementDay"
+        ],
+        "properties": {
+         "cardNumber": {
+          "type": "string"
+         },
+         "newStatementWeek": {
+          "type": "string",
+          "enum": [
+           "1",
+           "2",
+           "3",
+           "4"
+          ]
+         },
+         "statementDay": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/contact.email.get": {
+   "post": {
+    "operationId": "contact_email_get",
+    "summary": "5.6 registered e-mail",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "customerNo",
+         "intAddressInfoType"
+        ],
+        "properties": {
+         "customerNo": {
+          "type": "string"
+         },
+         "intAddressInfoType": {
+          "type": "string",
+          "enum": [
+           "E",
+           "P",
+           "B"
+          ]
+         },
+         "data": {
+          "type": "object"
+         },
+         "call": {
+          "type": "object"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/statement.pdf.send": {
+   "post": {
+    "operationId": "statement_pdf_send",
+    "summary": "5.7 send the statement PDF",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "customerNo",
+         "cardNumber",
+         "currencyType",
+         "statementDate",
+         "emailAddress"
+        ],
+        "properties": {
+         "customerNo": {
+          "type": "string"
+         },
+         "cardNumber": {
+          "type": "string"
+         },
+         "currencyType": {
+          "type": "string",
+          "enum": [
+           "TL",
+           "USD",
+           "EUR",
+           "GBP"
+          ]
+         },
+         "statementDate": {
+          "type": "string"
+         },
+         "emailAddress": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

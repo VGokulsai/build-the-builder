@@ -32,5 +32,10 @@
  "rehearsal-raw": {
   "workflow_id": "fbeb9fbc-0832-448b-b70c-0117efea6653",
   "agent_id": "38e14468-7b3f-45db-90d8-8c6a67a5c91c"
+ },
+ "final": {
+  "workflow_id": "56181cc0-a22b-43c7-baf9-78998153d9dd",
+  "agent_id": "6a629568-d1ec-4d57-b9ea-ccd3b05b8bdf",
+  "version": 6
  }
 }
